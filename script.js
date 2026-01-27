@@ -1,9 +1,7 @@
-/* script.js — Diff-only PDF compare with smart page alignment.
-   - Renders PDFs to canvases using pdf.js
-   - Uses pixelmatch to generate diff image (red pixels)
-   - Aligns pages when B has insertions/deletions by matching pages by similarity score
-
-   pixelmatch options referenced: threshold/includeAA/alpha/diffColor, etc. [web:37][web:51]
+/* script.js — Diff-only PDF compare with smart page alignment (insert/delete tolerant)
+   Expects globals (from index.html):
+   - window.pdfjsLib  (pdfjs-dist)
+   - window.pixelmatch
 */
 
 (function () {
@@ -15,19 +13,27 @@
     if (el) el.textContent += msg + "\n";
   }
 
+  function mustGet(id) {
+    const el = $(id);
+    if (!el) throw new Error(`Missing element #${id}`);
+    return el;
+  }
+
   function getPdfJsLib() {
     return window.pdfjsLib || globalThis.pdfjsLib || null;
   }
 
   function assertLibraries() {
-    if (!getPdfJsLib()) throw new Error("pdfjsLib missing (pdf.js did not load).");
+    const pdfjsLib = getPdfJsLib();
+    if (!pdfjsLib) throw new Error("pdfjsLib missing. Ensure index.html sets window.pdfjsLib.");
     if (!window.pixelmatch || typeof window.pixelmatch !== "function") {
-      throw new Error("pixelmatch missing (pixelmatch did not load).");
+      throw new Error("pixelmatch missing. Ensure index.html sets window.pixelmatch.");
     }
+    return pdfjsLib;
   }
 
   async function renderPdfToCanvases(file, scale) {
-    const pdfjsLib = getPdfJsLib();
+    const pdfjsLib = assertLibraries();
     const buf = await file.arrayBuffer();
     const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
 
@@ -46,6 +52,17 @@
     return canvases;
   }
 
+  function downscaleCanvas(src, maxDim = 420) {
+    const scale = Math.min(1, maxDim / Math.max(src.width, src.height));
+    if (scale >= 1) return src;
+
+    const c = document.createElement("canvas");
+    c.width = Math.max(1, Math.floor(src.width * scale));
+    c.height = Math.max(1, Math.floor(src.height * scale));
+    c.getContext("2d").drawImage(src, 0, 0, c.width, c.height);
+    return c;
+  }
+
   function cropToCommonSize(cA, cB) {
     const width = Math.min(cA.width, cB.width);
     const height = Math.min(cA.height, cB.height);
@@ -61,108 +78,98 @@
     return { a, b, width, height };
   }
 
-  // Compute a quick similarity cost between two pages using pixelmatch diffCount.
-  // Lower cost = more similar. Uses a downscaled render for speed.
-  function pageDiffCost(canvasA, canvasB, threshold, includeAA) {
-    const { a, b, width, height } = cropToCommonSize(canvasA, canvasB);
+  function pageDiffCost(aCanvas, bCanvas, threshold, includeAA) {
+    const { a, b, width, height } = cropToCommonSize(aCanvas, bCanvas);
     const aImg = a.getContext("2d").getImageData(0, 0, width, height);
     const bImg = b.getContext("2d").getImageData(0, 0, width, height);
 
-    // pixelmatch requires an output buffer even if we don't display it
-    const diff = new Uint8ClampedArray(width * height * 4);
-
+    const out = new Uint8ClampedArray(width * height * 4);
     const diffCount = window.pixelmatch(
       aImg.data,
       bImg.data,
-      diff,
+      out,
       width,
       height,
       { threshold, includeAA }
     );
 
-    // normalize by pixels so different page sizes aren't unfair
     return diffCount / (width * height);
   }
 
-  // Smart alignment heuristic:
-  // Walk A pages, for each page i find best matching B page j in [jCursor .. jCursor+window]
-  // If best match is not at jCursor, treat the skipped B pages as "inserted pages".
-  async function buildAlignment(pagesA, pagesB, opts) {
-    const {
-      threshold,
-      includeAA,
-      matchWindow = 2
-    } = opts;
+  async function buildAlignment(pagesA, pagesB, { threshold, includeAA, matchWindow }) {
+    const aSmall = pagesA.map((c) => downscaleCanvas(c));
+    const bSmall = pagesB.map((c) => downscaleCanvas(c));
 
-    // Downscale for matching speed/robustness
-    // (using canvases already rendered at renderScale; we downscale here)
-    function downscale(src, maxDim = 450) {
-      const scale = Math.min(1, maxDim / Math.max(src.width, src.height));
-      if (scale >= 1) return src;
-
-      const c = document.createElement("canvas");
-      c.width = Math.max(1, Math.floor(src.width * scale));
-      c.height = Math.max(1, Math.floor(src.height * scale));
-      c.getContext("2d").drawImage(src, 0, 0, c.width, c.height);
-      return c;
-    }
-
-    const aSmall = pagesA.map((c) => downscale(c));
-    const bSmall = pagesB.map((c) => downscale(c));
-
-    const pairs = []; // {type:'match', aIndex, bIndex, cost} or {type:'insertB', bIndex} or {type:'deleteA', aIndex}
-    let jCursor = 0;
+    const steps = [];
+    let j = 0;
 
     for (let i = 0; i < aSmall.length; i++) {
-      if (jCursor >= bSmall.length) {
-        // B ran out => remaining A pages are deletions
-        pairs.push({ type: "deleteA", aIndex: i });
+      if (j >= bSmall.length) {
+        steps.push({ type: "deleteA", aIndex: i });
         continue;
       }
 
-      // search for best match in window
-      let bestJ = jCursor;
+      let bestJ = j;
       let bestCost = Infinity;
 
-      const jMax = Math.min(bSmall.length - 1, jCursor + matchWindow);
-      for (let j = jCursor; j <= jMax; j++) {
-        const cost = pageDiffCost(aSmall[i], bSmall[j], threshold, includeAA);
+      const end = Math.min(bSmall.length - 1, j + matchWindow);
+      for (let k = j; k <= end; k++) {
+        const cost = pageDiffCost(aSmall[i], bSmall[k], threshold, includeAA);
         if (cost < bestCost) {
           bestCost = cost;
-          bestJ = j;
+          bestJ = k;
         }
       }
 
-      // If best match is ahead, then pages between jCursor..bestJ-1 are insertions in B
-      while (jCursor < bestJ) {
-        pairs.push({ type: "insertB", bIndex: jCursor });
-        jCursor++;
+      while (j < bestJ) {
+        steps.push({ type: "insertB", bIndex: j });
+        j++;
       }
 
-      pairs.push({ type: "match", aIndex: i, bIndex: jCursor, cost: bestCost });
-      jCursor++;
+      steps.push({ type: "match", aIndex: i, bIndex: j, cost: bestCost });
+      j++;
     }
 
-    // Remaining B pages after matching A are insertions
-    while (jCursor < bSmall.length) {
-      pairs.push({ type: "insertB", bIndex: jCursor });
-      jCursor++;
+    while (j < bSmall.length) {
+      steps.push({ type: "insertB", bIndex: j });
+      j++;
     }
 
-    return pairs;
+    return steps;
   }
 
-  function makeBlockTitle(text, extraClass) {
-    const title = document.createElement("div");
-    title.textContent = text;
-    title.style.fontWeight = "bold";
-    title.style.margin = "8px 0";
-    if (extraClass) title.className = extraClass;
-    return title;
+  function makeTitle(text, tone) {
+    const t = document.createElement("div");
+    t.textContent = text;
+    t.style.fontWeight = "bold";
+    t.style.margin = "8px 0";
+    if (tone === "warn") t.style.color = "#8a5a00";
+    return t;
   }
 
-  function diffCanvasForPair(canvasA, canvasB, pixelOpts) {
-    const { a, b, width, height } = cropToCommonSize(canvasA, canvasB);
+  function makeMeta(text) {
+    const d = document.createElement("div");
+    d.textContent = text;
+    d.style.fontSize = "0.9em";
+    d.style.color = "#666";
+    d.style.margin = "4px 0 8px";
+    return d;
+  }
+
+  function placeholderCanvas(text) {
+    const c = document.createElement("canvas");
+    c.width = 700; c.height = 80;
+    const ctx = c.getContext("2d");
+    ctx.fillStyle = "#fff";
+    ctx.fillRect(0, 0, c.width, c.height);
+    ctx.fillStyle = "#999";
+    ctx.font = "16px Arial";
+    ctx.fillText(text, 12, 45);
+    return c;
+  }
+
+  function diffOnlyCanvas(aPage, bPage, pixelOpts) {
+    const { a, b, width, height } = cropToCommonSize(aPage, bPage);
     const aImg = a.getContext("2d").getImageData(0, 0, width, height);
     const bImg = b.getContext("2d").getImageData(0, 0, width, height);
 
@@ -170,8 +177,8 @@
     diffCanvas.width = width;
     diffCanvas.height = height;
 
-    const diffCtx = diffCanvas.getContext("2d");
-    const diffImage = diffCtx.createImageData(width, height);
+    const ctx = diffCanvas.getContext("2d");
+    const diffImage = ctx.createImageData(width, height);
 
     const diffCount = window.pixelmatch(
       aImg.data,
@@ -182,21 +189,21 @@
       pixelOpts
     );
 
-    diffCtx.putImageData(diffImage, 0, 0);
+    ctx.putImageData(diffImage, 0, 0);
     return { diffCanvas, diffCount, width, height };
   }
 
   async function runCompare(fileA, fileB) {
     assertLibraries();
 
-    const renderScale = parseFloat($("renderScale").value);
-    const threshold = parseFloat($("threshold").value);
-    const alpha = parseFloat($("alpha").value);
-    const includeAA = $("includeAA").checked;
-    const matchWindow = parseInt($("matchWindow").value, 10);
-
-    const results = $("results");
+    const results = mustGet("results");
     results.innerHTML = "Rendering PDFs…";
+
+    const renderScale = parseFloat(mustGet("renderScale").value);
+    const threshold = parseFloat(mustGet("threshold").value);
+    const alpha = parseFloat(mustGet("alpha").value);
+    const includeAA = mustGet("includeAA").checked;
+    const matchWindow = parseInt(mustGet("matchWindow").value, 10);
 
     const [pagesA, pagesB] = await Promise.all([
       renderPdfToCanvases(fileA, renderScale),
@@ -204,94 +211,53 @@
     ]);
 
     results.innerHTML = "";
-
     log(`A pages: ${pagesA.length}, B pages: ${pagesB.length}`);
-    if (pagesA.length !== pagesB.length) {
-      log(`Page count differs; using smart alignment (window=${matchWindow}).`);
-    }
 
     const alignment = await buildAlignment(pagesA, pagesB, { threshold, includeAA, matchWindow });
 
-    // Render results
     for (const step of alignment) {
       const block = document.createElement("div");
-      block.className = "block";
+      block.style.marginBottom = "24px";
 
       if (step.type === "insertB") {
-        block.appendChild(makeBlockTitle(`Inserted page in B: page ${step.bIndex + 1}`, "warn"));
-        // Show "new page" itself as a diff against blank? We'll just render the page image as a hint:
-        // But you requested diff-only, so we show a label and a blank canvas placeholder.
-        const note = document.createElement("div");
-        note.className = "meta";
-        note.textContent = "This page exists only in the new PDF (B), so there is no matching page in A.";
-        block.appendChild(note);
-
-        const placeholder = document.createElement("canvas");
-        placeholder.width = 600; placeholder.height = 80;
-        const ctx = placeholder.getContext("2d");
-        ctx.fillStyle = "#fff";
-        ctx.fillRect(0, 0, placeholder.width, placeholder.height);
-        ctx.fillStyle = "#999";
-        ctx.font = "16px Arial";
-        ctx.fillText("Inserted page (no diff to compute).", 12, 45);
-        block.appendChild(placeholder);
-
+        block.appendChild(makeTitle(`Inserted page in B: page ${step.bIndex + 1}`, "warn"));
+        block.appendChild(makeMeta("This page exists only in the new PDF (B)."));
+        block.appendChild(placeholderCanvas("Inserted page (no diff computed)."));
         results.appendChild(block);
         continue;
       }
 
       if (step.type === "deleteA") {
-        block.appendChild(makeBlockTitle(`Deleted page from B (was in A): page ${step.aIndex + 1}`, "warn"));
-        const note = document.createElement("div");
-        note.className = "meta";
-        note.textContent = "This page exists only in the old PDF (A), so there is no matching page in B.";
-        block.appendChild(note);
-
-        const placeholder = document.createElement("canvas");
-        placeholder.width = 600; placeholder.height = 80;
-        const ctx = placeholder.getContext("2d");
-        ctx.fillStyle = "#fff";
-        ctx.fillRect(0, 0, placeholder.width, placeholder.height);
-        ctx.fillStyle = "#999";
-        ctx.font = "16px Arial";
-        ctx.fillText("Deleted page (no diff to compute).", 12, 45);
-        block.appendChild(placeholder);
-
+        block.appendChild(makeTitle(`Deleted from B (was in A): page ${step.aIndex + 1}`, "warn"));
+        block.appendChild(makeMeta("This page exists only in the old PDF (A)."));
+        block.appendChild(placeholderCanvas("Deleted page (no diff computed)."));
         results.appendChild(block);
         continue;
       }
-
-      // matched pages: compute and show diff only
-      const aPage = pagesA[step.aIndex];
-      const bPage = pagesB[step.bIndex];
 
       const pixelOpts = {
         threshold,
         includeAA,
         alpha,
-        diffColor: [255, 0, 0] // default is red; set explicitly for clarity [web:37][web:51]
+        diffColor: [255, 0, 0]
       };
 
-      const { diffCanvas, diffCount, width, height } = diffCanvasForPair(aPage, bPage, pixelOpts);
+      const { diffCanvas, diffCount, width, height } =
+        diffOnlyCanvas(pagesA[step.aIndex], pagesB[step.bIndex], pixelOpts);
 
-      const similarityPct = Math.max(0, 100 - (step.cost * 100)).toFixed(2);
+      const similarityPct = Math.max(0, 100 - step.cost * 100).toFixed(2);
 
       block.appendChild(
-        makeBlockTitle(
-          `A page ${step.aIndex + 1} ↔ B page ${step.bIndex + 1} — diff pixels: ${diffCount} — similarity: ${similarityPct}%`
-        )
+        makeTitle(`A ${step.aIndex + 1} ↔ B ${step.bIndex + 1} | diffPixels=${diffCount} | similarity≈${similarityPct}%`)
       );
-
-      const meta = document.createElement("div");
-      meta.className = "meta";
-      meta.textContent = `Diff size: ${width}×${height}, threshold=${threshold}, alpha=${alpha}, includeAA=${includeAA}`;
-      block.appendChild(meta);
-
+      block.appendChild(makeMeta(`Diff size: ${width}×${height} | threshold=${threshold} | alpha=${alpha} | includeAA=${includeAA}`));
       block.appendChild(diffCanvas);
+
       results.appendChild(block);
     }
   }
 
+  // Define compare() immediately so the button can call it even if modules load slightly later.
   window.compare = async function compare() {
     try {
       const fileA = $("pdfA")?.files?.[0];
@@ -301,13 +267,18 @@
         return;
       }
 
-      if ($("log")) $("log").textContent = "";
+      const logEl = $("log");
+      if (logEl) logEl.textContent = "";
+
       await runCompare(fileA, fileB);
       log("Done.");
     } catch (err) {
       console.error(err);
       log("Error: " + (err && err.message ? err.message : String(err)));
-      alert("Error occurred. Open DevTools → Console for details.");
+      alert("An error occurred. Open DevTools → Console for details.");
     }
   };
+
+  // Helpful startup log (also proves script.js loaded)
+  log("script.js loaded; window.compare is ready.");
 })();

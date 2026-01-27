@@ -11,6 +11,16 @@
     #log { color: #666; font-size: 0.9em; white-space: pre-wrap; margin-top: 12px; }
     button { padding: 6px 12px; }
 
+    .fileRow {
+      display: flex;
+      gap: 18px;
+      flex-wrap: wrap;
+      align-items: flex-end;
+      margin-bottom: 12px;
+    }
+    .fileCol { display: flex; flex-direction: column; gap: 6px; }
+    .fileCol label { font-size: 0.95em; color: #333; }
+
     .controls {
       margin: 18px 0;
       padding: 12px;
@@ -21,22 +31,29 @@
       grid-template-columns: 180px 1fr 80px;
       gap: 10px 12px;
       align-items: center;
-      max-width: 760px;
+      max-width: 820px;
     }
     .controls label { font-size: 0.95em; }
     .controls input[type="range"] { width: 100%; }
     .controls .value { color: #666; font-size: 0.9em; text-align: right; }
-
-    .meta { font-size: 0.9em; color: #666; margin: 8px 0 0; }
-    .warn { color: #8a5a00; }
   </style>
 </head>
 <body>
   <h2>Compare PDFs</h2>
 
-  <input type="file" id="pdfA" accept="application/pdf" />
-  <input type="file" id="pdfB" accept="application/pdf" />
-  <button id="compareBtn">Compute!</button>
+  <div class="fileRow">
+    <div class="fileCol">
+      <label for="pdfA">Original File</label>
+      <input type="file" id="pdfA" accept="application/pdf" />
+    </div>
+
+    <div class="fileCol">
+      <label for="pdfB">Updated File</label>
+      <input type="file" id="pdfB" accept="application/pdf" />
+    </div>
+
+    <button id="compareBtn">Compute!</button>
+  </div>
 
   <div class="controls">
     <label for="renderScale">Render Scale</label>
@@ -56,8 +73,13 @@
 
     <label for="matchWindow">Extra Page Detection</label>
     <input type="range" id="matchWindow" min="0" max="5" step="1" value="2"
-      title="Allows inserted/removed pages. Higher tolerates more consecutive inserts/deletes (slower, can drift if too high)."/>
+      title="How aggressively to detect inserted/removed pages. Higher = more willing to insert/skip pages while matching."/>
     <div class="value" id="matchWindowVal">2</div>
+
+    <label for="scanned">Scanned document</label>
+    <input type="checkbox" id="scanned"
+      title="Enable if the PDF is a scan (no real text). This disables text-based page matching and uses images only."/>
+    <div class="value"></div>
 
     <label for="includeAA">Include Anti-Aliasing</label>
     <input type="checkbox" id="includeAA"
@@ -96,7 +118,7 @@
     }
 
     document.addEventListener("DOMContentLoaded", () => {
-      ["renderScale", "threshold", "alpha", "matchWindow", "gapPenalty"].forEach(bindRange);
+      ["renderScale", "threshold", "alpha", "matchWindow"].forEach(bindRange);
 
       document.getElementById("compareBtn").addEventListener("click", () => {
         if (typeof window.compare === "function") window.compare();

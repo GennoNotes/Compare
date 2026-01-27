@@ -1,13 +1,14 @@
 
 /* script.js — PDF visual diff with bounding boxes (client-side)
-   Requires:
-     - pdf.js v4 loaded globally as pdfjsLib
-     - pixelmatch UMD loaded globally as pixelmatch
+   Requires (loaded in index.html BEFORE this file):
+     - pdf.js v4.x as global `pdfjsLib`
+     - pdf.worker.min.js set on pdfjsLib.GlobalWorkerOptions.workerSrc
+     - pixelmatch UMD as global `pixelmatch`
 */
 
 (function () {
   // -------------------------
-  // Utils & logging
+  // Utilities
   // -------------------------
   const $ = (id) => document.getElementById(id);
 
@@ -19,17 +20,17 @@
 
   function assertLibraries() {
     if (!window.pdfjsLib) {
-      throw new Error("pdfjsLib is not available. Ensure pdf.min.js is loaded before script.js.");
+      throw new Error("pdfjsLib is not available. Ensure pdf.min.js is loaded BEFORE script.js.");
     }
     if (!window.pixelmatch || typeof window.pixelmatch !== "function") {
-      throw new Error("pixelmatch is not available. Ensure pixelmatch.umd.js is loaded before script.js.");
+      throw new Error("pixelmatch is not available. Ensure pixelmatch.umd.js is loaded BEFORE script.js.");
     }
     try {
-      // Self-heal worker if not set by the page
       if (!pdfjsLib.GlobalWorkerOptions.workerSrc) {
+        // self-heal if the page forgot to set the worker
         pdfjsLib.GlobalWorkerOptions.workerSrc =
           "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.0.379/pdf.worker.min.js";
-        log("pdf.js workerSrc was not set; applied default CDN worker.");
+        log("Worker not set; applied default pdf.worker.min.js from CDN.");
       }
     } catch (_) {
       // ignore
@@ -37,10 +38,11 @@
   }
 
   // -------------------------
-  // PDF → Canvas rendering
+  // Render a PDF file into canvases (one per page)
   // -------------------------
   async function renderPdfToCanvases(file, scale = 2) {
-    if (!file) throw new Error("No file provided to renderPdfToCanvases");
+    if (!file) throw new Error("No file provided to renderPdfToCanvases.");
+
     const buf = await file.arrayBuffer();
     const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
 
@@ -61,7 +63,7 @@
   }
 
   // -------------------------
-  // Align two canvases to common size (no scaling)
+  // Align two canvases to the same size (crop to overlap)
   // -------------------------
   function cropToCommonSize(cA, cB) {
     const width = Math.min(cA.width, cB.width);
@@ -81,15 +83,16 @@
   }
 
   // -------------------------
-  // Diff → bounding boxes
+  // Convert diff pixels to bounding boxes
   // -------------------------
   function findBoundingBoxes(diffRGBA, width, height, minArea = 36) {
-    // diffRGBA is an ImageData.data (Uint8ClampedArray)
+    // diffRGBA is ImageData.data (Uint8ClampedArray)
     const visited = new Uint8Array(width * height);
     const boxes = [];
 
     const idx = (x, y) => y * width + x;
-    const isDiff = (i) => {
+
+    function isDiffPixel(i) {
       const off = i * 4;
       return (
         diffRGBA[off] !== 0 ||
@@ -97,7 +100,7 @@
         diffRGBA[off + 2] !== 0 ||
         diffRGBA[off + 3] !== 0
       );
-    };
+    }
 
     function bfs(sx, sy) {
       const stack = [[sx, sy]];
@@ -114,22 +117,22 @@
         if (x > maxX) maxX = x;
         if (y > maxY) maxY = y;
 
-        // 4-neighborhood
+        // 4-connected neighbors
         if (x + 1 < width) {
           const r = idx(x + 1, y);
-          if (!visited[r] && isDiff(r)) stack.push([x + 1, y]);
+          if (!visited[r] && isDiffPixel(r)) stack.push([x + 1, y]);
         }
         if (x - 1 >= 0) {
           const l = idx(x - 1, y);
-          if (!visited[l] && isDiff(l)) stack.push([x - 1, y]);
+          if (!visited[l] && isDiffPixel(l)) stack.push([x - 1, y]);
         }
         if (y + 1 < height) {
           const d = idx(x, y + 1);
-          if (!visited[d] && isDiff(d)) stack.push([x, y + 1]);
+          if (!visited[d] && isDiffPixel(d)) stack.push([x, y + 1]);
         }
         if (y - 1 >= 0) {
           const u = idx(x, y - 1);
-          if (!visited[u] && isDiff(u)) stack.push([x, y - 1]);
+          if (!visited[u] && isDiffPixel(u)) stack.push([x, y - 1]);
         }
       }
 
@@ -143,16 +146,8 @@
     for (let y = 0; y < height; y++) {
       for (let x = 0; x < width; x++) {
         const i = idx(x, y);
-        if (!visited[i]) {
-          const off = i * 4;
-          if (
-            diffRGBA[off] !== 0 ||
-            diffRGBA[off + 1] !== 0 ||
-            diffRGBA[off + 2] !== 0 ||
-            diffRGBA[off + 3] !== 0
-          ) {
-            bfs(x, y);
-          }
+        if (!visited[i] && isDiffPixel(i)) {
+          bfs(x, y);
         }
       }
     }
@@ -161,7 +156,7 @@
   }
 
   // -------------------------
-  // Draw boxes
+  // Draw bounding boxes
   // -------------------------
   function drawBoxes(canvas, boxes, color = "red", alpha = 0.95) {
     const ctx = canvas.getContext("2d");
@@ -181,9 +176,9 @@
   async function compareInternal(fileA, fileB, options = {}) {
     const {
       renderScale = 2,
-      threshold = 0.1, // 0..1; lower = more sensitive
-      includeAA = false,
-      minBoxArea = 36
+      threshold = 0.1,    // 0..1; lower = more sensitive
+      includeAA = false,  // whether to count anti-aliased pixels as diffs
+      minBoxArea = 36     // filter tiny specks
     } = options;
 
     assertLibraries();
@@ -198,12 +193,12 @@
 
     if (results) results.innerHTML = "";
 
-    const count = Math.min(pagesA.length, pagesB.length);
+    const pageCount = Math.min(pagesA.length, pagesB.length);
     if (pagesA.length !== pagesB.length) {
-      log(`Warning: Different page counts — A:${pagesA.length} vs B:${pagesB.length}. Comparing first ${count} page(s).`);
+      log(`Warning: Different page counts — A:${pagesA.length} vs B:${pagesB.length}. Comparing first ${pageCount} page(s).`);
     }
 
-    for (let p = 0; p < count; p++) {
+    for (let p = 0; p < pageCount; p++) {
       const { a, b, width, height } = cropToCommonSize(pagesA[p], pagesB[p]);
 
       const aCtx = a.getContext("2d");
@@ -211,7 +206,7 @@
       const aImg = aCtx.getImageData(0, 0, width, height);
       const bImg = bCtx.getImageData(0, 0, width, height);
 
-      // Create diff buffer
+      // Prepare diff buffer
       const diffCanvas = document.createElement("canvas");
       diffCanvas.width = width;
       diffCanvas.height = height;
@@ -219,7 +214,7 @@
       const diffImage = diffCtx.createImageData(width, height);
 
       // Run pixelmatch
-      const diffs = pixelmatch(
+      const diffCount = pixelmatch(
         aImg.data,
         bImg.data,
         diffImage.data,
@@ -227,11 +222,11 @@
         height,
         { threshold, includeAA }
       );
-      log(`Page ${p + 1}: ${diffs} differing pixels`);
+      log(`Page ${p + 1}: ${diffCount} differing pixels`);
 
       diffCtx.putImageData(diffImage, 0, 0);
 
-      // Build overlay (draw B + boxes)
+      // Overlay boxes on top of PDF B
       const overlay = document.createElement("canvas");
       overlay.width = width;
       overlay.height = height;
@@ -241,7 +236,7 @@
       const boxes = findBoundingBoxes(diffImage.data, width, height, minBoxArea);
       drawBoxes(overlay, boxes, "red", 0.95);
 
-      // Append results
+      // Append to results
       const block = document.createElement("div");
       const title = document.createElement("div");
       title.textContent = `Page ${p + 1}`;
@@ -250,24 +245,16 @@
       block.appendChild(title);
       block.appendChild(overlay);
 
-      // Optional: also show raw diff pixels
-      // const diffLabel = document.createElement("div");
-      // diffLabel.textContent = "Raw diff pixels";
-      // diffLabel.style.fontSize = "12px";
-      // diffLabel.style.color = "#666";
-      // block.appendChild(diffLabel);
-      // block.appendChild(diffCanvas);
-
       if (results) results.appendChild(block);
     }
 
-    if (count === 0 && results) {
+    if (pageCount === 0 && results) {
       results.textContent = "No pages to compare.";
     }
   }
 
   // -------------------------
-  // Public API
+  // Public API (global function for the button)
   // -------------------------
   window.compare = async function compare() {
     try {
@@ -279,7 +266,7 @@
         return;
       }
 
-      // Clear previous log
+      // Clear previous log output
       const logEl = $("log");
       if (logEl) logEl.textContent = "";
 
@@ -294,8 +281,7 @@
     } catch (err) {
       console.error(err);
       log("Error: " + (err && err.message ? err.message : String(err)));
-      alert("An error occurred. Check the console for details.");
+      alert("An error occurred. Check the console (F12 → Console) for details.");
     }
   };
 })();
-``

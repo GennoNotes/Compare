@@ -1,8 +1,8 @@
 /* script.js — PDF visual diff with bounding boxes (client-side)
    Requires (loaded in index.html BEFORE this file):
      - pdf.js v4.x as global `pdfjsLib`
-     - pdf.worker.min.js set on pdfjsLib.GlobalWorkerOptions.workerSrc
-     - pixelmatch UMD as global `pixelmatch`
+     - pdf.worker.min.mjs set on pdfjsLib.GlobalWorkerOptions.workerSrc
+     - pixelmatch as global `pixelmatch`
 */
 
 (function () {
@@ -34,9 +34,8 @@
 
     try {
       if (!pdfjsLib.GlobalWorkerOptions.workerSrc) {
-        // self-heal if the page forgot to set the worker
         pdfjsLib.GlobalWorkerOptions.workerSrc =
-          "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.0.379/pdf.worker.min.mjs";
+          "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.0.379/build/pdf.worker.min.mjs";
         log("Worker not set; applied default pdf.worker.min.mjs from CDN.");
       }
     } catch (_) {
@@ -94,9 +93,9 @@
 
   // -------------------------
   // Convert diff pixels to bounding boxes
+  // diffRGBA comes from pixelmatch with diffMask: true and default diffColor [255, 0, 0].
   // -------------------------
   function findBoundingBoxes(diffRGBA, width, height, minArea = 36) {
-    // diffRGBA is ImageData.data (Uint8ClampedArray)
     const visited = new Uint8Array(width * height);
     const boxes = [];
 
@@ -104,12 +103,13 @@
 
     function isDiffPixel(i) {
       const off = i * 4;
-      return (
-        diffRGBA[off] !== 0 ||
-        diffRGBA[off + 1] !== 0 ||
-        diffRGBA[off + 2] !== 0 ||
-        diffRGBA[off + 3] !== 0
-      );
+      const r = diffRGBA[off];
+      const g = diffRGBA[off + 1];
+      const b = diffRGBA[off + 2];
+      const a = diffRGBA[off + 3];
+
+      // pixelmatch default diffColor is [255, 0, 0] and mask is over transparent background
+      return r === 255 && g === 0 && b === 0 && a !== 0;
     }
 
     function bfs(sx, sy) {
@@ -165,27 +165,25 @@
     return boxes;
   }
 
-// -------------------------
-// Draw bounding boxes (filled translucent red overlay)
-// -------------------------
-function drawBoxes(canvas, boxes, color = "red", alpha = 0.35) {
-  const ctx = canvas.getContext("2d");
-  ctx.save();
-  ctx.strokeStyle = color;
-  ctx.fillStyle = color;
-  ctx.globalAlpha = alpha;
-  ctx.lineWidth = Math.max(2, Math.floor(canvas.width / 400));
-
-  for (const b of boxes) {
-    // Filled rectangle for strong visual ROI
-    ctx.fillRect(b.x, b.y, b.w, b.h);
-    // Optional border to emphasize edges
-    ctx.globalAlpha = 0.9;
-    ctx.strokeRect(b.x, b.y, b.w, b.h);
+  // -------------------------
+  // Draw bounding boxes (filled translucent red overlay)
+  // -------------------------
+  function drawBoxes(canvas, boxes, color = "red", alpha = 0.35) {
+    const ctx = canvas.getContext("2d");
+    ctx.save();
+    ctx.strokeStyle = color;
+    ctx.fillStyle = color;
     ctx.globalAlpha = alpha;
+    ctx.lineWidth = Math.max(2, Math.floor(canvas.width / 400));
+
+    for (const b of boxes) {
+      ctx.fillRect(b.x, b.y, b.w, b.h);
+      ctx.globalAlpha = 0.9;
+      ctx.strokeRect(b.x, b.y, b.w, b.h);
+      ctx.globalAlpha = alpha;
+    }
+    ctx.restore();
   }
-  ctx.restore();
-}
 
   // -------------------------
   // Main compare routine
@@ -193,9 +191,9 @@ function drawBoxes(canvas, boxes, color = "red", alpha = 0.35) {
   async function compareInternal(fileA, fileB, options = {}) {
     const {
       renderScale = 2,
-      threshold = 0.1,    // 0..1; lower = more sensitive
-      includeAA = false,  // whether to count anti-aliased pixels as diffs
-      minBoxArea = 36     // filter tiny specks
+      threshold = 0.1,
+      includeAA = false,
+      minBoxArea = 36
     } = options;
 
     assertLibraries();
@@ -223,21 +221,26 @@ function drawBoxes(canvas, boxes, color = "red", alpha = 0.35) {
       const aImg = aCtx.getImageData(0, 0, width, height);
       const bImg = bCtx.getImageData(0, 0, width, height);
 
-      // Prepare diff buffer
+      // Prepare diff buffer (mask)
       const diffCanvas = document.createElement("canvas");
       diffCanvas.width = width;
       diffCanvas.height = height;
       const diffCtx = diffCanvas.getContext("2d");
       const diffImage = diffCtx.createImageData(width, height);
 
-      // Run pixelmatch
+      // Run pixelmatch, using a mask and explicit diffColor
       const diffCount = window.pixelmatch(
         aImg.data,
         bImg.data,
         diffImage.data,
         width,
         height,
-        { threshold, includeAA }
+        {
+          threshold,
+          includeAA,
+          diffMask: true,
+          diffColor: [255, 0, 0]  // bright red
+        }
       );
       log(`Page ${p + 1}: ${diffCount} differing pixels`);
 
@@ -249,11 +252,10 @@ function drawBoxes(canvas, boxes, color = "red", alpha = 0.35) {
       overlay.height = height;
       const oCtx = overlay.getContext("2d");
       oCtx.drawImage(b, 0, 0, width, height);
-      
+
       const boxes = findBoundingBoxes(diffImage.data, width, height, minBoxArea);
       drawBoxes(overlay, boxes, "red", 0.35);
-      
-      // Append to results
+
       const block = document.createElement("div");
       const title = document.createElement("div");
       title.textContent = `Page ${p + 1}`;
@@ -261,9 +263,8 @@ function drawBoxes(canvas, boxes, color = "red", alpha = 0.35) {
       title.style.margin = "8px 0";
       block.appendChild(title);
       block.appendChild(overlay);
-      
-      if (results) results.appendChild(block);
 
+      if (results) results.appendChild(block);
     }
 
     if (pageCount === 0 && results) {
@@ -284,7 +285,6 @@ function drawBoxes(canvas, boxes, color = "red", alpha = 0.35) {
         return;
       }
 
-      // Clear previous log output
       const logEl = $("log");
       if (logEl) logEl.textContent = "";
 

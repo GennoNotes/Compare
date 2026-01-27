@@ -24,37 +24,29 @@
   <div id="results"></div>
   <div id="log"></div>
 
-  <!-- pdf.js core (defer so it executes after HTML parsing) -->
-  <script defer src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.0.379/pdf.min.jset the pdf.js worker for v4 (semicolon and quotes included) -->
+  https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.0.379/pdf.min.js</script>
   <script defer>
     document.addEventListener("DOMContentLoaded", function () {
       if (window.pdfjsLib && window.pdfjsLib.GlobalWorkerOptions) {
-        window.pdfjsLib.GlobalWorkerOptions.workerSrc =
-          "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.0.379/pdf.worker.min.js";
+        window.pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.0.379/pdf.worker.min.js";
       }
     });
   </script>
-
-  <!-- pixelmatch UMD (exposes global `pixelmatch`) -->
-  <script defer src="https://cdn.jsdelivr.net/npm/pixelmatch@5.3.0/dist/pixelmatch.umd- your app (defines window.compare) -->
-  <script defer src="./script.jsind the button after everything is parsed -->
+  <script defer src="https://cdn.jsdelivr.net/npm/pixelmatch@5h.umd.js</script>
+  script.js</script>
   <script>
     document.addEventListener("DOMContentLoaded", function () {
       var btn = document.getElementById("compareBtn");
-      btn.addEventListener("click", async function () {
+      btn.addEventListener("click", function () {
         if (typeof window.compare === "function") {
-          try {
-            await window.compare();
-          } catch (e) {
-            console.error(e);
-            alert(e && e.message ? e.message : String(e));
-          }
+          window.compare();
         } else {
-          console.error("window.compare is not defined. Check that script.js loaded without errors.");
-          alert("Compare function is not loaded. Open DevTools → Network to verify script.js (200 OK).");
+          alert("Compare function is not loaded. Check that script.js is present and loaded without errors.");
+          console.error("window.compare is not defined.");
         }
       });
     });
   </script>
 </body>
 </html>
+``

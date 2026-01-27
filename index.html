@@ -3,6 +3,7 @@
 <html>
 <head>
   <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>PDF Image Difference Highlighter</title>
   <style>
     body { font-family: Arial, sans-serif; padding: 20px; }
@@ -15,26 +16,45 @@
 <body>
   <h2>Compare Two PDFs (Image Difference Mode)</h2>
 
-  <input type="file" id="pdfA" accept="application/pdf">
-  <input type="file" id="pdfB" accept="application/pdf">
-  <button onclick="compare()">Compare</button>
+  <input type="file" id="pdfA" accept="application/pdf" />
+  <input type="file" id="pdfB" accept="application/pdf" />
+  <button id="compareBtn">Compare</button>
 
   <h3>Differences (highlighted in red):</h3>
   <div id="results"></div>
   <div id="log"></div>
 
-  <!-- pdf.js -->
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.0.379/pdf.min
-  <!-- pdf.js worker (required for v4) -->
-  <script>
-    pdfjsLib.GlobalWorkerOptions.workerSrc =
-      "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.0.379/pdf.worker.min.js";
+  <!-- pdf.js core (defer so it executes after HTML parsing) -->
+  <script defer src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.0.379/pdf.min.jset the pdf.js worker for v4 (semicolon and quotes included) -->
+  <script defer>
+    document.addEventListener("DOMContentLoaded", function () {
+      if (window.pdfjsLib && window.pdfjsLib.GlobalWorkerOptions) {
+        window.pdfjsLib.GlobalWorkerOptions.workerSrc =
+          "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.0.379/pdf.worker.min.js";
+      }
+    });
   </script>
 
-  <!-- pixelmatch UMD (global pixelmatch function) -->
-  https://cdn.jsdelivr.net/npm/pixelmatch@5.3.0/dist/pixelmatch.umd.js
-
-  <!-- your app code -->
-  script.js</script>
+  <!-- pixelmatch UMD (exposes global `pixelmatch`) -->
+  <script defer src="https://cdn.jsdelivr.net/npm/pixelmatch@5.3.0/dist/pixelmatch.umd- your app (defines window.compare) -->
+  <script defer src="./script.jsind the button after everything is parsed -->
+  <script>
+    document.addEventListener("DOMContentLoaded", function () {
+      var btn = document.getElementById("compareBtn");
+      btn.addEventListener("click", async function () {
+        if (typeof window.compare === "function") {
+          try {
+            await window.compare();
+          } catch (e) {
+            console.error(e);
+            alert(e && e.message ? e.message : String(e));
+          }
+        } else {
+          console.error("window.compare is not defined. Check that script.js loaded without errors.");
+          alert("Compare function is not loaded. Open DevTools → Network to verify script.js (200 OK).");
+        }
+      });
+    });
+  </script>
 </body>
 </html>

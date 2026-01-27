@@ -3,70 +3,99 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>PDF Image Difference Highlighter</title>
+  <title>PDF Diff (Smart Alignment)</title>
   <style>
     body { font-family: Arial, sans-serif; padding: 20px; }
-    canvas { margin: 10px 0; border: 1px solid #ccc; max-width: 100%; height: auto; }
-    #results > div { margin-bottom: 24px; }
-    #log { color: #666; font-size: 0.9em; white-space: pre-wrap; }
+    canvas { margin: 10px 0; border: 1px solid #ccc; max-width: 100%; height: auto; display: block; }
+    #results > .block { margin-bottom: 24px; }
+    #log { color: #666; font-size: 0.9em; white-space: pre-wrap; margin-top: 12px; }
     button { padding: 6px 12px; }
-    .controls { margin: 20px 0; padding: 12px; border: 1px solid #ddd; border-radius: 4px; }
-    .controls label { display: inline-block; width: 140px; margin: 4px 8px 4px 0; }
-    .controls input[type="range"] { width: 120px; }
-    .controls span { font-size: 0.9em; color: #666; }
-    .page-match-info { font-size: 0.9em; color: #888; margin-top: 4px; }
+
+    .controls {
+      margin: 18px 0;
+      padding: 12px;
+      border: 1px solid #ddd;
+      border-radius: 6px;
+      background: #fafafa;
+      display: grid;
+      grid-template-columns: 180px 1fr 80px;
+      gap: 10px 12px;
+      align-items: center;
+      max-width: 760px;
+    }
+    .controls label { font-size: 0.95em; }
+    .controls input[type="range"] { width: 100%; }
+    .controls .value { color: #666; font-size: 0.9em; text-align: right; }
+
+    .meta { font-size: 0.9em; color: #666; margin: 8px 0 0; }
+    .warn { color: #8a5a00; }
   </style>
 </head>
 <body>
-  <h2>Compare Two PDFs (Smart Page Alignment)</h2>
+  <h2>Compare Two PDFs (Diff-only + Smart Page Alignment)</h2>
 
   <input type="file" id="pdfA" accept="application/pdf" />
   <input type="file" id="pdfB" accept="application/pdf" />
   <button id="compareBtn">Compare</button>
 
   <div class="controls">
-    <label>Render Scale: <span id="renderScaleVal">2.0</span></label>
-    <input type="range" id="renderScale" min="1.0" max="4.0" step="0.1" value="2.0">
+    <label for="renderScale">Render scale</label>
+    <input type="range" id="renderScale" min="1.0" max="3.0" step="0.25" value="2.0" />
+    <div class="value" id="renderScaleVal">2.0</div>
 
-    <label>Threshold: <span id="thresholdVal">0.10</span></label>
-    <input type="range" id="threshold" min="0.0" max="0.3" step="0.01" value="0.10">
+    <label for="threshold">Pixel threshold</label>
+    <input type="range" id="threshold" min="0.00" max="0.30" step="0.01" value="0.10" />
+    <div class="value" id="thresholdVal">0.10</div>
 
-    <label>Min Box Area: <span id="minBoxAreaVal">36</span></label>
-    <input type="range" id="minBoxArea" min="10" max="200" step="10" value="36">
+    <label for="alpha">Unchanged fade (alpha)</label>
+    <input type="range" id="alpha" min="0.00" max="0.50" step="0.01" value="0.10" />
+    <div class="value" id="alphaVal">0.10</div>
 
-    <label>Anti-alias: <input type="checkbox" id="includeAA"></label>
+    <label for="matchWindow">Page match window</label>
+    <input type="range" id="matchWindow" min="0" max="5" step="1" value="2" />
+    <div class="value" id="matchWindowVal">2</div>
+
+    <label for="includeAA">Count anti-aliasing</label>
+    <input type="checkbox" id="includeAA" />
+    <div class="value"></div>
   </div>
 
-  <h3>Differences (red = changes):</h3>
+  <h3>Output (red = differences)</h3>
   <div id="results"></div>
   <div id="log"></div>
 
-  <!-- pdf.js and pixelmatch -->
+  <!-- pdf.js pinned -->
   <script type="module">
     import * as pdfjsLib from "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.0.379/build/pdf.min.mjs";
     window.pdfjsLib = pdfjsLib;
-    if (pdfjsLib.GlobalWorkerOptions) {
-      pdfjsLib.GlobalWorkerOptions.workerSrc =
-        "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.0.379/build/pdf.worker.min.mjs";
-    }
+    pdfjsLib.GlobalWorkerOptions.workerSrc =
+      "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.0.379/build/pdf.worker.min.mjs";
   </script>
+
+  <!-- pixelmatch pinned -->
   <script type="module">
     import pixelmatchImport from "https://esm.run/pixelmatch@5.3.0";
     window.pixelmatch = pixelmatchImport;
   </script>
 
   <script src="script.js"></script>
-  <script>
-    document.addEventListener("DOMContentLoaded", function () {
-      document.getElementById("compareBtn").addEventListener("click", function () {
-        if (typeof window.compare === "function") window.compare();
-      });
 
-      // Wire sliders
-      ["renderScale", "threshold", "minBoxArea"].forEach(id => {
-        const slider = document.getElementById(id);
-        const span = document.getElementById(id + "Val");
-        slider.addEventListener("input", () => span.textContent = slider.value);
+  <script>
+    function bindRange(id) {
+      const el = document.getElementById(id);
+      const out = document.getElementById(id + "Val");
+      if (!el || !out) return;
+      const update = () => out.textContent = el.value;
+      el.addEventListener("input", update);
+      update();
+    }
+
+    document.addEventListener("DOMContentLoaded", () => {
+      ["renderScale", "threshold", "alpha", "matchWindow"].forEach(bindRange);
+
+      document.getElementById("compareBtn").addEventListener("click", () => {
+        if (typeof window.compare === "function") window.compare();
+        else alert("compare() is not available. Check that script.js loaded.");
       });
     });
   </script>

@@ -1,29 +1,41 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <meta charset="UTF-8" />
-    <title>PDF Image Difference Highlighter</title>
-    <style>
-        body { font-family: Arial; padding: 20px; }
-        canvas { margin: 10px 0; border: 1px solid #ccc; }
-    </style>
+  <meta charset="UTF-8" />
+  <title>PDF Image Difference Highlighter</title>
+  <style>
+    body { font-family: Arial, sans-serif; padding: 20px; }
+    canvas { margin: 10px 0; border: 1px solid #ccc; max-width: 100%; height: auto; }
+    #results > div { margin-bottom: 24px; }
+    #log { color: #666; font-size: 0.9em; white-space: pre-wrap; }
+    button { padding: 6px 12px; }
+  </style>
 </head>
 <body>
-    <h2>Compare Two PDFs (Image Difference Mode)</h2>
+  <h2>Compare Two PDFs (Image Difference Mode)</h2>
 
-    <input type="file" id="pdfA" accept="application/pdf" />
-    <input type="file" id="pdfB" accept="application/pdf" />
-    <button onclick="compare()">Compare</button>
+  <input type="file" id="pdfA" accept="application/pdf" />
+  <input type="file" id="pdfB" accept="application/pdf" />
+  <button onclick="compare()">Compare</button>
 
-    <h3>Differences (highlighted in red):</h3>
-    <div id="results"></div>
+  <h3>Differences (highlighted in red):</h3>
+  <div id="results"></div>
+  <div id="log"></div>
 
-    <!-- pdf.js -->
-    https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.0.379/pdf.min.js
+  <!-- pdf.js core -->
+  https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.0.379/pdf.min.js</script>
+  <!-- Set the pdf.js worker (v4 requires this) -->
+  <script>
+    if (window.pdfjsLib) {
+      pdfjsLib.GlobalWorkerOptions.workerSrc =
+        'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.0.379/pdf.worker.min.js';
+    }
+  </script>
 
-    <!-- pixelmatch -->
-    https://cdn.jsdelivr.net/npm/pixelmatch@5.3.0/dist/pixelmatch.js</script>
+  <!-- pixelmatch (UMD build exposes global `pixelmatch`) -->
+  https://cdn.jsdelivr.net/npm/pixelmatch@5.3.0/dist/pixelmatch.umd.js</script>
 
-    script.js</script>
+  <!-- your app (defines window.compare) -->
+  ./script.js</script>
 </body>
 </html>

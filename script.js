@@ -1,4 +1,4 @@
-/* script.js — PDF visual diff with bounding boxes (client-side)
+/* script.js — PDF visual diff (client-side)
    Requires (loaded in index.html BEFORE this file):
      - pdf.js v4.x as global `pdfjsLib`
      - pdf.worker.min.mjs set on pdfjsLib.GlobalWorkerOptions.workerSrc
@@ -6,9 +6,6 @@
 */
 
 (function () {
-  // -------------------------
-  // Utilities
-  // -------------------------
   const $ = (id) => document.getElementById(id);
 
   function log(msg) {
@@ -18,7 +15,6 @@
   }
 
   function getPdfJsLib() {
-    // Prefer window, but fall back to globalThis if HTML attached it there.
     return window.pdfjsLib || globalThis.pdfjsLib || null;
   }
 
@@ -43,9 +39,6 @@
     }
   }
 
-  // -------------------------
-  // Render a PDF file into canvases (one per page)
-  // -------------------------
   async function renderPdfToCanvases(file, scale = 2) {
     if (!file) throw new Error("No file provided to renderPdfToCanvases.");
 
@@ -71,9 +64,6 @@
     return canvases;
   }
 
-  // -------------------------
-  // Align two canvases to the same size (crop to overlap)
-  // -------------------------
   function cropToCommonSize(cA, cB) {
     const width = Math.min(cA.width, cB.width);
     const height = Math.min(cA.height, cB.height);
@@ -91,109 +81,11 @@
     return { a: aCrop, b: bCrop, width, height };
   }
 
-  // -------------------------
-  // Convert diff pixels to bounding boxes
-  // diffRGBA comes from pixelmatch with diffMask: true and default diffColor [255, 0, 0].
-  // -------------------------
-  function findBoundingBoxes(diffRGBA, width, height, minArea = 36) {
-    const visited = new Uint8Array(width * height);
-    const boxes = [];
-
-    const idx = (x, y) => y * width + x;
-
-    function isDiffPixel(i) {
-      const off = i * 4;
-      const r = diffRGBA[off];
-      const g = diffRGBA[off + 1];
-      const b = diffRGBA[off + 2];
-      const a = diffRGBA[off + 3];
-
-      // pixelmatch default diffColor is [255, 0, 0] and mask is over transparent background
-      return r === 255 && g === 0 && b === 0 && a !== 0;
-    }
-
-    function bfs(sx, sy) {
-      const stack = [[sx, sy]];
-      let minX = sx, minY = sy, maxX = sx, maxY = sy;
-
-      while (stack.length) {
-        const [x, y] = stack.pop();
-        const i = idx(x, y);
-        if (visited[i]) continue;
-        visited[i] = 1;
-
-        if (x < minX) minX = x;
-        if (y < minY) minY = y;
-        if (x > maxX) maxX = x;
-        if (y > maxY) maxY = y;
-
-        // 4-connected neighbors
-        if (x + 1 < width) {
-          const r = idx(x + 1, y);
-          if (!visited[r] && isDiffPixel(r)) stack.push([x + 1, y]);
-        }
-        if (x - 1 >= 0) {
-          const l = idx(x - 1, y);
-          if (!visited[l] && isDiffPixel(l)) stack.push([x - 1, y]);
-        }
-        if (y + 1 < height) {
-          const d = idx(x, y + 1);
-          if (!visited[d] && isDiffPixel(d)) stack.push([x, y + 1]);
-        }
-        if (y - 1 >= 0) {
-          const u = idx(x, y - 1);
-          if (!visited[u] && isDiffPixel(u)) stack.push([x, y - 1]);
-        }
-      }
-
-      const w = maxX - minX + 1;
-      const h = maxY - minY + 1;
-      if (w * h >= minArea) {
-        boxes.push({ x: minX, y: minY, w, h });
-      }
-    }
-
-    for (let y = 0; y < height; y++) {
-      for (let x = 0; x < width; x++) {
-        const i = idx(x, y);
-        if (!visited[i] && isDiffPixel(i)) {
-          bfs(x, y);
-        }
-      }
-    }
-
-    return boxes;
-  }
-
-  // -------------------------
-  // Draw bounding boxes (filled translucent red overlay)
-  // -------------------------
-  function drawBoxes(canvas, boxes, color = "red", alpha = 0.35) {
-    const ctx = canvas.getContext("2d");
-    ctx.save();
-    ctx.strokeStyle = color;
-    ctx.fillStyle = color;
-    ctx.globalAlpha = alpha;
-    ctx.lineWidth = Math.max(2, Math.floor(canvas.width / 400));
-
-    for (const b of boxes) {
-      ctx.fillRect(b.x, b.y, b.w, b.h);
-      ctx.globalAlpha = 0.9;
-      ctx.strokeRect(b.x, b.y, b.w, b.h);
-      ctx.globalAlpha = alpha;
-    }
-    ctx.restore();
-  }
-
-  // -------------------------
-  // Main compare routine
-  // -------------------------
   async function compareInternal(fileA, fileB, options = {}) {
     const {
       renderScale = 2,
       threshold = 0.1,
-      includeAA = false,
-      minBoxArea = 36
+      includeAA = false
     } = options;
 
     assertLibraries();
@@ -221,14 +113,14 @@
       const aImg = aCtx.getImageData(0, 0, width, height);
       const bImg = bCtx.getImageData(0, 0, width, height);
 
-      // Prepare diff buffer (mask)
+      // Prepare diff canvas
       const diffCanvas = document.createElement("canvas");
       diffCanvas.width = width;
       diffCanvas.height = height;
       const diffCtx = diffCanvas.getContext("2d");
       const diffImage = diffCtx.createImageData(width, height);
 
-      // Run pixelmatch, using a mask and explicit diffColor
+      // Standard pixelmatch diff: unchanged pixels dimmed, diffs in bright red
       const diffCount = window.pixelmatch(
         aImg.data,
         bImg.data,
@@ -237,32 +129,48 @@
         height,
         {
           threshold,
-          includeAA,
-          diffMask: true,
-          diffColor: [255, 0, 0]  // bright red
+          includeAA
+          // alpha, diffColor, etc. left at defaults
         }
       );
       log(`Page ${p + 1}: ${diffCount} differing pixels`);
 
       diffCtx.putImageData(diffImage, 0, 0);
 
-      // Overlay boxes on top of PDF B
-      const overlay = document.createElement("canvas");
-      overlay.width = width;
-      overlay.height = height;
-      const oCtx = overlay.getContext("2d");
-      oCtx.drawImage(b, 0, 0, width, height);
-
-      const boxes = findBoundingBoxes(diffImage.data, width, height, minBoxArea);
-      drawBoxes(overlay, boxes, "red", 0.35);
-
+      // Build block: original (B) + diff side by side
       const block = document.createElement("div");
+
       const title = document.createElement("div");
       title.textContent = `Page ${p + 1}`;
       title.style.fontWeight = "bold";
       title.style.margin = "8px 0";
+
+      const container = document.createElement("div");
+      container.style.display = "flex";
+      container.style.gap = "16px";
+      container.style.flexWrap = "wrap";
+
+      const origLabel = document.createElement("div");
+      origLabel.textContent = "Original (B)";
+      origLabel.style.fontSize = "0.9em";
+
+      const diffLabel = document.createElement("div");
+      diffLabel.textContent = "Diff (red = changes)";
+      diffLabel.style.fontSize = "0.9em";
+
+      const origWrapper = document.createElement("div");
+      origWrapper.appendChild(origLabel);
+      origWrapper.appendChild(b);
+
+      const diffWrapper = document.createElement("div");
+      diffWrapper.appendChild(diffLabel);
+      diffWrapper.appendChild(diffCanvas);
+
+      container.appendChild(origWrapper);
+      container.appendChild(diffWrapper);
+
       block.appendChild(title);
-      block.appendChild(overlay);
+      block.appendChild(container);
 
       if (results) results.appendChild(block);
     }
@@ -272,9 +180,6 @@
     }
   }
 
-  // -------------------------
-  // Public API (global function for the button)
-  // -------------------------
   window.compare = async function compare() {
     try {
       const fileA = $("pdfA")?.files?.[0];
@@ -291,8 +196,7 @@
       await compareInternal(fileA, fileB, {
         renderScale: 2,
         threshold: 0.1,
-        includeAA: false,
-        minBoxArea: 36
+        includeAA: false
       });
 
       log("Done.");

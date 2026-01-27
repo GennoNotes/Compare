@@ -36,7 +36,7 @@
 
   <input type="file" id="pdfA" accept="application/pdf" />
   <input type="file" id="pdfB" accept="application/pdf" />
-  <button id="compareBtn">Compare</button>
+  <button id="compareBtn">Compute!</button>
 
   <div class="controls">
     <label for="renderScale">Render Scale</label>
@@ -55,12 +55,12 @@
     <input type="range" id="matchWindow" min="0" max="5" step="1" value="2" />
     <div class="value" id="matchWindowVal">2</div>
 
-    <label for="includeAA">Count Anti-aliasing</label>
+    <label for="includeAA">Include Anti-Aliasing</label>
     <input type="checkbox" id="includeAA" />
     <div class="value"></div>
   </div>
 
-  <h3>Highlighted objects are detected differences:</h3>
+  <h3>All highlighted objects are detected differences.</h3>
   <div id="results"></div>
   <div id="log"></div>
 

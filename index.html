@@ -10,6 +10,10 @@
     #results > div { margin-bottom: 24px; }
     #log { color: #666; font-size: 0.9em; white-space: pre-wrap; }
     button { padding: 6px 12px; }
+    .controls { margin: 20px 0; padding: 12px; border: 1px solid #ddd; border-radius: 4px; }
+    .controls label { display: inline-block; width: 140px; margin: 4px 8px 4px 0; }
+    .controls input[type="range"] { width: 120px; }
+    .controls span { font-size: 0.9em; color: #666; }
   </style>
 </head>
 <body>
@@ -19,17 +23,27 @@
   <input type="file" id="pdfB" accept="application/pdf" />
   <button id="compareBtn">Compare</button>
 
-  <h3>Differences (highlighted in red):</h3>
+  <div class="controls">
+    <label>Render Scale: <span id="renderScaleVal">2.0</span></label>
+    <input type="range" id="renderScale" min="1.0" max="4.0" step="0.1" value="2.0">
+
+    <label>Threshold: <span id="thresholdVal">0.10</span></label>
+    <input type="range" id="threshold" min="0.0" max="0.3" step="0.01" value="0.10">
+
+    <label>Min Box Area: <span id="minBoxAreaVal">36</span></label>
+    <input type="range" id="minBoxArea" min="10" max="200" step="10" value="36">
+
+    <label>Anti-alias: <input type="checkbox" id="includeAA"></label>
+  </div>
+
+  <h3>Differences (red = changes):</h3>
   <div id="results"></div>
   <div id="log"></div>
 
   <!-- pdf.js (pdfjs-dist) pinned to a specific version -->
   <script type="module">
     import * as pdfjsLib from "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.0.379/build/pdf.min.mjs";
-
-    // Expose as a global for script.js
     window.pdfjsLib = pdfjsLib;
-
     if (pdfjsLib.GlobalWorkerOptions) {
       pdfjsLib.GlobalWorkerOptions.workerSrc =
         "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.0.379/build/pdf.worker.min.mjs";
@@ -42,10 +56,10 @@
     window.pixelmatch = pixelmatchImport;
   </script>
 
-  <!-- your main comparison logic (must be AFTER the modules above) -->
+  <!-- your main comparison logic -->
   <script src="script.js"></script>
 
-  <!-- button wiring -->
+  <!-- button wiring + controls -->
   <script>
     document.addEventListener("DOMContentLoaded", function () {
       var btn = document.getElementById("compareBtn");
@@ -56,6 +70,20 @@
           alert("Compare function is not loaded. Open DevTools → Network to verify script.js (HTTP 200).");
           console.error("window.compare is not defined.");
         }
+      });
+
+      // Wire up sliders
+      const sliders = [
+        { id: "renderScale", val: "renderScaleVal" },
+        { id: "threshold", val: "thresholdVal" },
+        { id: "minBoxArea", val: "minBoxAreaVal" }
+      ];
+      sliders.forEach(({ id, val }) => {
+        const slider = document.getElementById(id);
+        const span = document.getElementById(val);
+        slider.addEventListener("input", () => {
+          span.textContent = slider.value;
+        });
       });
     });
   </script>

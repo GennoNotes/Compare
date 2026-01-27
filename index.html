@@ -32,35 +32,35 @@
   </style>
 </head>
 <body>
-  <h2>Compare Two PDFs (Diff-only + Smart Page Alignment)</h2>
+  <h2>Compare PDFs</h2>
 
   <input type="file" id="pdfA" accept="application/pdf" />
   <input type="file" id="pdfB" accept="application/pdf" />
   <button id="compareBtn">Compare</button>
 
   <div class="controls">
-    <label for="renderScale">Render scale</label>
+    <label for="renderScale">Render Scale</label>
     <input type="range" id="renderScale" min="1.0" max="3.0" step="0.25" value="2.0" />
     <div class="value" id="renderScaleVal">2.0</div>
 
-    <label for="threshold">Pixel threshold</label>
+    <label for="threshold">Pixel Threshold</label>
     <input type="range" id="threshold" min="0.00" max="0.30" step="0.01" value="0.10" />
     <div class="value" id="thresholdVal">0.10</div>
 
-    <label for="alpha">Unchanged fade (alpha)</label>
+    <label for="alpha">Unchanged Fade</label>
     <input type="range" id="alpha" min="0.00" max="0.50" step="0.01" value="0.10" />
     <div class="value" id="alphaVal">0.10</div>
 
-    <label for="matchWindow">Page match window</label>
+    <label for="matchWindow">Page Match Score</label>
     <input type="range" id="matchWindow" min="0" max="5" step="1" value="2" />
     <div class="value" id="matchWindowVal">2</div>
 
-    <label for="includeAA">Count anti-aliasing</label>
+    <label for="includeAA">Count Anti-aliasing</label>
     <input type="checkbox" id="includeAA" />
     <div class="value"></div>
   </div>
 
-  <h3>Output (red = differences)</h3>
+  <h3>Highlighted objects are detected differences:</h3>
   <div id="results"></div>
   <div id="log"></div>
 

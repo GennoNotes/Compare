@@ -17,19 +17,27 @@
     if (el) el.textContent += msg + "\n";
   }
 
+  function getPdfJsLib() {
+    // Prefer window, but fall back to globalThis if HTML attached it there.
+    return window.pdfjsLib || globalThis.pdfjsLib || null;
+  }
+
   function assertLibraries() {
-    if (!window.pdfjsLib) {
-      throw new Error("pdfjsLib is not available. Ensure pdf.min.js is loaded BEFORE script.js.");
+    const pdfjsLib = getPdfJsLib();
+
+    if (!pdfjsLib) {
+      throw new Error("pdfjsLib is not available. Ensure pdf.js is loaded and assigns pdfjsLib BEFORE script.js.");
     }
     if (!window.pixelmatch || typeof window.pixelmatch !== "function") {
-      throw new Error("pixelmatch is not available. Ensure pixelmatch.umd.js is loaded BEFORE script.js.");
+      throw new Error("pixelmatch is not available. Ensure pixelmatch is loaded and assigns window.pixelmatch BEFORE script.js.");
     }
+
     try {
       if (!pdfjsLib.GlobalWorkerOptions.workerSrc) {
         // self-heal if the page forgot to set the worker
         pdfjsLib.GlobalWorkerOptions.workerSrc =
-          "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.0.379/pdf.worker.min.js";
-        log("Worker not set; applied default pdf.worker.min.js from CDN.");
+          "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.0.379/pdf.worker.min.mjs";
+        log("Worker not set; applied default pdf.worker.min.mjs from CDN.");
       }
     } catch (_) {
       // ignore
@@ -41,6 +49,9 @@
   // -------------------------
   async function renderPdfToCanvases(file, scale = 2) {
     if (!file) throw new Error("No file provided to renderPdfToCanvases.");
+
+    const pdfjsLib = getPdfJsLib();
+    if (!pdfjsLib) throw new Error("pdfjsLib is not available when rendering.");
 
     const buf = await file.arrayBuffer();
     const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
@@ -213,7 +224,7 @@
       const diffImage = diffCtx.createImageData(width, height);
 
       // Run pixelmatch
-      const diffCount = pixelmatch(
+      const diffCount = window.pixelmatch(
         aImg.data,
         bImg.data,
         diffImage.data,

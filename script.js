@@ -1,21 +1,22 @@
 /* script.js — Diff-only PDF compare with smart page alignment (insert/delete tolerant)
    Expects globals (from index.html):
-   - window.pdfjsLib  (pdfjs-dist)
+   - window.pdfjsLib
    - window.pixelmatch
 */
 
 (function () {
+  const NL = String.fromCharCode(10);
   const $ = (id) => document.getElementById(id);
 
   function log(msg) {
     console.log(msg);
     const el = $("log");
-    if (el) el.textContent += msg + "\n";
+    if (el) el.textContent += String(msg) + NL;
   }
 
   function mustGet(id) {
     const el = $(id);
-    if (!el) throw new Error(`Missing element #${id}`);
+    if (!el) throw new Error("Missing element #" + id);
     return el;
   }
 
@@ -84,19 +85,16 @@
     const bImg = b.getContext("2d").getImageData(0, 0, width, height);
 
     const out = new Uint8ClampedArray(width * height * 4);
-    const diffCount = window.pixelmatch(
-      aImg.data,
-      bImg.data,
-      out,
-      width,
-      height,
-      { threshold, includeAA }
-    );
+    const diffCount = window.pixelmatch(aImg.data, bImg.data, out, width, height, { threshold, includeAA });
 
     return diffCount / (width * height);
   }
 
-  async function buildAlignment(pagesA, pagesB, { threshold, includeAA, matchWindow }) {
+  async function buildAlignment(pagesA, pagesB, opts) {
+    const threshold = opts.threshold;
+    const includeAA = opts.includeAA;
+    const matchWindow = opts.matchWindow;
+
     const aSmall = pagesA.map((c) => downscaleCanvas(c));
     const bSmall = pagesB.map((c) => downscaleCanvas(c));
 
@@ -138,12 +136,12 @@
     return steps;
   }
 
-  function makeTitle(text, tone) {
+  function makeTitle(text, warn) {
     const t = document.createElement("div");
     t.textContent = text;
     t.style.fontWeight = "bold";
     t.style.margin = "8px 0";
-    if (tone === "warn") t.style.color = "#8a5a00";
+    if (warn) t.style.color = "#8a5a00";
     return t;
   }
 
@@ -180,14 +178,7 @@
     const ctx = diffCanvas.getContext("2d");
     const diffImage = ctx.createImageData(width, height);
 
-    const diffCount = window.pixelmatch(
-      aImg.data,
-      bImg.data,
-      diffImage.data,
-      width,
-      height,
-      pixelOpts
-    );
+    const diffCount = window.pixelmatch(aImg.data, bImg.data, diffImage.data, width, height, pixelOpts);
 
     ctx.putImageData(diffImage, 0, 0);
     return { diffCanvas, diffCount, width, height };
@@ -205,13 +196,16 @@
     const includeAA = mustGet("includeAA").checked;
     const matchWindow = parseInt(mustGet("matchWindow").value, 10);
 
-    const [pagesA, pagesB] = await Promise.all([
+    const pages = await Promise.all([
       renderPdfToCanvases(fileA, renderScale),
       renderPdfToCanvases(fileB, renderScale)
     ]);
 
+    const pagesA = pages[0];
+    const pagesB = pages[1];
+
     results.innerHTML = "";
-    log(`A pages: ${pagesA.length}, B pages: ${pagesB.length}`);
+    log("A pages: " + pagesA.length + ", B pages: " + pagesB.length);
 
     const alignment = await buildAlignment(pagesA, pagesB, { threshold, includeAA, matchWindow });
 
@@ -220,7 +214,7 @@
       block.style.marginBottom = "24px";
 
       if (step.type === "insertB") {
-        block.appendChild(makeTitle(`Inserted page in B: page ${step.bIndex + 1}`, "warn"));
+        block.appendChild(makeTitle("Inserted page in B: page " + (step.bIndex + 1), true));
         block.appendChild(makeMeta("This page exists only in the new PDF (B)."));
         block.appendChild(placeholderCanvas("Inserted page (no diff computed)."));
         results.appendChild(block);
@@ -228,7 +222,7 @@
       }
 
       if (step.type === "deleteA") {
-        block.appendChild(makeTitle(`Deleted from B (was in A): page ${step.aIndex + 1}`, "warn"));
+        block.appendChild(makeTitle("Deleted from B (was in A): page " + (step.aIndex + 1), true));
         block.appendChild(makeMeta("This page exists only in the old PDF (A)."));
         block.appendChild(placeholderCanvas("Deleted page (no diff computed)."));
         results.appendChild(block);
@@ -242,34 +236,43 @@
         diffColor: [255, 0, 0]
       };
 
-      const { diffCanvas, diffCount, width, height } =
-        diffOnlyCanvas(pagesA[step.aIndex], pagesB[step.bIndex], pixelOpts);
+      const out = diffOnlyCanvas(pagesA[step.aIndex], pagesB[step.bIndex], pixelOpts);
 
       const similarityPct = Math.max(0, 100 - step.cost * 100).toFixed(2);
 
       block.appendChild(
-        makeTitle(`A ${step.aIndex + 1} ↔ B ${step.bIndex + 1} | diffPixels=${diffCount} | similarity≈${similarityPct}%`)
+        makeTitle(
+          "A " + (step.aIndex + 1) + " ↔ B " + (step.bIndex + 1) +
+          " | diffPixels=" + out.diffCount +
+          " | similarity≈" + similarityPct + "%"
+        )
       );
-      block.appendChild(makeMeta(`Diff size: ${width}×${height} | threshold=${threshold} | alpha=${alpha} | includeAA=${includeAA}`));
-      block.appendChild(diffCanvas);
+      block.appendChild(
+        makeMeta(
+          "Diff size: " + out.width + "×" + out.height +
+          " | threshold=" + threshold +
+          " | alpha=" + alpha +
+          " | includeAA=" + includeAA
+        )
+      );
+      block.appendChild(out.diffCanvas);
 
       results.appendChild(block);
     }
   }
 
-  // Define compare() immediately so the button can call it even if modules load slightly later.
+  // Define compare() globally
   window.compare = async function compare() {
     try {
-      const fileA = $("pdfA")?.files?.[0];
-      const fileB = $("pdfB")?.files?.[0];
+      const fileA = $("pdfA") && $("pdfA").files ? $("pdfA").files[0] : null;
+      const fileB = $("pdfB") && $("pdfB").files ? $("pdfB").files[0] : null;
+
       if (!fileA || !fileB) {
         alert("Please choose two PDF files first.");
         return;
       }
 
-      const logEl = $("log");
-      if (logEl) logEl.textContent = "";
-
+      if ($("log")) $("log").textContent = "";
       await runCompare(fileA, fileB);
       log("Done.");
     } catch (err) {
@@ -279,6 +282,6 @@
     }
   };
 
-  // Helpful startup log (also proves script.js loaded)
+  // proves script loaded
   log("script.js loaded; window.compare is ready.");
 })();

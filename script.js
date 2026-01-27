@@ -79,6 +79,7 @@
     return { a, b, width, height };
   }
 
+  // Cost in [0..1]: 0 = identical, 1 = totally different.
   function pageDiffCost(aCanvas, bCanvas, threshold, includeAA) {
     const { a, b, width, height } = cropToCommonSize(aCanvas, bCanvas);
     const aImg = a.getContext("2d").getImageData(0, 0, width, height);
@@ -86,52 +87,103 @@
 
     const out = new Uint8ClampedArray(width * height * 4);
     const diffCount = window.pixelmatch(aImg.data, bImg.data, out, width, height, { threshold, includeAA });
-
     return diffCount / (width * height);
   }
 
-  async function buildAlignment(pagesA, pagesB, opts) {
+  // DP alignment to handle inserted/removed pages.
+  // maxConsecutiveGaps controls how many inserts/deletes can happen in a row (your matchWindow slider).
+  async function buildAlignmentDP(pagesA, pagesB, opts) {
     const threshold = opts.threshold;
     const includeAA = opts.includeAA;
-    const matchWindow = opts.matchWindow;
+    const maxConsecutiveGaps = opts.maxConsecutiveGaps; // from matchWindow
+    const gapPenalty = opts.gapPenalty;
 
     const aSmall = pagesA.map((c) => downscaleCanvas(c));
     const bSmall = pagesB.map((c) => downscaleCanvas(c));
 
-    const steps = [];
-    let j = 0;
+    const n = aSmall.length, m = bSmall.length;
 
-    for (let i = 0; i < aSmall.length; i++) {
-      if (j >= bSmall.length) {
-        steps.push({ type: "deleteA", aIndex: i });
-        continue;
-      }
+    const dp = Array.from({ length: n + 1 }, () => new Float32Array(m + 1).fill(Infinity));
+    const back = Array.from({ length: n + 1 }, () => new Int8Array(m + 1)); // 0 diag, 1 up (skip A), 2 left (skip B)
+    const gapA = Array.from({ length: n + 1 }, () => new Int16Array(m + 1)); // consecutive skips of A (up moves)
+    const gapB = Array.from({ length: n + 1 }, () => new Int16Array(m + 1)); // consecutive skips of B (left moves)
 
-      let bestJ = j;
-      let bestCost = Infinity;
+    dp[0][0] = 0;
 
-      const end = Math.min(bSmall.length - 1, j + matchWindow);
-      for (let k = j; k <= end; k++) {
-        const cost = pageDiffCost(aSmall[i], bSmall[k], threshold, includeAA);
-        if (cost < bestCost) {
-          bestCost = cost;
-          bestJ = k;
+    for (let i = 1; i <= n; i++) {
+      dp[i][0] = dp[i - 1][0] + gapPenalty;
+      back[i][0] = 1;
+      gapA[i][0] = Math.min(32767, gapA[i - 1][0] + 1);
+    }
+    for (let j = 1; j <= m; j++) {
+      dp[0][j] = dp[0][j - 1] + gapPenalty;
+      back[0][j] = 2;
+      gapB[0][j] = Math.min(32767, gapB[0][j - 1] + 1);
+    }
+
+    const cache = new Map();
+    const key = (i, j) => i + "," + j;
+
+    async function cost(i, j) {
+      const k = key(i, j);
+      if (cache.has(k)) return cache.get(k);
+      const v = pageDiffCost(aSmall[i], bSmall[j], threshold, includeAA);
+      cache.set(k, v);
+      return v;
+    }
+
+    for (let i = 1; i <= n; i++) {
+      for (let j = 1; j <= m; j++) {
+        const cDiag = dp[i - 1][j - 1] + await cost(i - 1, j - 1);
+
+        let cUp = Infinity;
+        if (maxConsecutiveGaps > 0 && gapA[i - 1][j] < maxConsecutiveGaps) {
+          cUp = dp[i - 1][j] + gapPenalty;
+        }
+
+        let cLeft = Infinity;
+        if (maxConsecutiveGaps > 0 && gapB[i][j - 1] < maxConsecutiveGaps) {
+          cLeft = dp[i][j - 1] + gapPenalty;
+        }
+
+        if (cDiag <= cUp && cDiag <= cLeft) {
+          dp[i][j] = cDiag;
+          back[i][j] = 0;
+          gapA[i][j] = 0;
+          gapB[i][j] = 0;
+        } else if (cUp <= cLeft) {
+          dp[i][j] = cUp;
+          back[i][j] = 1;
+          gapA[i][j] = gapA[i - 1][j] + 1;
+          gapB[i][j] = 0;
+        } else {
+          dp[i][j] = cLeft;
+          back[i][j] = 2;
+          gapB[i][j] = gapB[i][j - 1] + 1;
+          gapA[i][j] = 0;
         }
       }
+    }
 
-      while (j < bestJ) {
-        steps.push({ type: "insertB", bIndex: j });
-        j++;
+    // Backtrack into steps
+    const steps = [];
+    let i = n, j = m;
+    while (i > 0 || j > 0) {
+      const move = back[i][j];
+      if (move === 0) {
+        // match i-1 with j-1
+        const c = cache.get(key(i - 1, j - 1)) ?? 1;
+        steps.push({ type: "match", aIndex: i - 1, bIndex: j - 1, cost: c });
+        i--; j--;
+      } else if (move === 1) {
+        steps.push({ type: "deleteA", aIndex: i - 1 });
+        i--;
+      } else {
+        steps.push({ type: "insertB", bIndex: j - 1 });
+        j--;
       }
-
-      steps.push({ type: "match", aIndex: i, bIndex: j, cost: bestCost });
-      j++;
     }
-
-    while (j < bSmall.length) {
-      steps.push({ type: "insertB", bIndex: j });
-      j++;
-    }
+    steps.reverse();
 
     return steps;
   }
@@ -194,24 +246,30 @@
     const threshold = parseFloat(mustGet("threshold").value);
     const alpha = parseFloat(mustGet("alpha").value);
     const includeAA = mustGet("includeAA").checked;
-    const matchWindow = parseInt(mustGet("matchWindow").value, 10);
 
-    const pages = await Promise.all([
+    // Reinterpreted:
+    // matchWindow = max consecutive inserted/deleted pages allowed in alignment.
+    const matchWindow = parseInt(mustGet("matchWindow").value, 10);
+    const gapPenalty = parseFloat(mustGet("gapPenalty").value);
+
+    const [pagesA, pagesB] = await Promise.all([
       renderPdfToCanvases(fileA, renderScale),
       renderPdfToCanvases(fileB, renderScale)
     ]);
 
-    const pagesA = pages[0];
-    const pagesB = pages[1];
-
     results.innerHTML = "";
     log("A pages: " + pagesA.length + ", B pages: " + pagesB.length);
 
-    const alignment = await buildAlignment(pagesA, pagesB, { threshold, includeAA, matchWindow });
+    const alignment = await buildAlignmentDP(pagesA, pagesB, {
+      threshold,
+      includeAA,
+      maxConsecutiveGaps: matchWindow,
+      gapPenalty
+    });
 
     for (const step of alignment) {
       const block = document.createElement("div");
-      block.style.marginBottom = "24px";
+      block.className = "block";
 
       if (step.type === "insertB") {
         block.appendChild(makeTitle("Inserted page in B: page " + (step.bIndex + 1), true));
@@ -232,8 +290,8 @@
       const pixelOpts = {
         threshold,
         includeAA,
-        alpha,
-        diffColor: [255, 0, 0]
+        alpha,                 // blending factor for unchanged pixels [web:50]
+        diffColor: [255, 0, 0] // red diff pixels [web:50]
       };
 
       const out = diffOnlyCanvas(pagesA[step.aIndex], pagesB[step.bIndex], pixelOpts);
@@ -252,7 +310,9 @@
           "Diff size: " + out.width + "×" + out.height +
           " | threshold=" + threshold +
           " | alpha=" + alpha +
-          " | includeAA=" + includeAA
+          " | includeAA=" + includeAA +
+          " | gapPenalty=" + gapPenalty +
+          " | maxGaps=" + matchWindow
         )
       );
       block.appendChild(out.diffCanvas);
@@ -261,11 +321,10 @@
     }
   }
 
-  // Define compare() globally
   window.compare = async function compare() {
     try {
-      const fileA = $("pdfA") && $("pdfA").files ? $("pdfA").files[0] : null;
-      const fileB = $("pdfB") && $("pdfB").files ? $("pdfB").files[0] : null;
+      const fileA = $("pdfA")?.files?.[0] || null;
+      const fileB = $("pdfB")?.files?.[0] || null;
 
       if (!fileA || !fileB) {
         alert("Please choose two PDF files first.");
@@ -282,6 +341,5 @@
     }
   };
 
-  // proves script loaded
   log("script.js loaded; window.compare is ready.");
 })();

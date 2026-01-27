@@ -4,33 +4,40 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>PDF Image Difference Highlighter (Sanity Test)</title>
+  <title>PDF Image Difference Highlighter</title>
   <style>
     body { font-family: Arial, sans-serif; padding: 20px; }
+    canvas { margin: 10px 0; border: 1px solid #ccc; max-width: 100%; height: auto; }
+    #results > div { margin-bottom: 24px; }
+    #log { color: #666; font-size: 0.9em; white-space: pre-wrap; }
     button { padding: 6px 12px; }
   </style>
 </head>
 <body>
-  <h2>PDF Compare</h2>
+  <h2>Compare Two PDFs (Image Difference Mode)</h2>
+
   <input type="file" id="pdfA" accept="application/pdf" />
   <input type="file" id="pdfB" accept="application/pdf" />
   <button id="compareBtn">Compare</button>
 
-  <script>
-    // Define window.compare inline so we can verify the click works
-    console.log("Defining window.compare (inline)");
-    window.compare = function () {
-      alert("window.compare is callable!");
-    };
+  <h3>Differences (highlighted in red):</h3>
+  <div id="results"></div>
+  <div id="log"></div>
 
-    // Bind the button after DOM is ready
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.0.379/pdf.min  <script>
+    if (window.pdfjsLib && window.pdfjsLib.GlobalWorkerOptions) {
+      window.pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.0.379/pdf.worker.min.js";
+    }
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/pixelmatch@5.3.0/dist/pixelmatch.umd.jsscript src="script  <script>
     document.addEventListener("DOMContentLoaded", function () {
       var btn = document.getElementById("compareBtn");
       btn.addEventListener("click", function () {
         if (typeof window.compare === "function") {
           window.compare();
         } else {
-          alert("Compare function is not loaded.");
+          alert("Compare function is not loaded. Open DevTools → Network to verify script.js (HTTP 200).");
+          console.error("window.compare is not defined.");
         }
       });
     });

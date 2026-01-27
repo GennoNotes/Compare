@@ -165,20 +165,27 @@
     return boxes;
   }
 
-  // -------------------------
-  // Draw bounding boxes
-  // -------------------------
-  function drawBoxes(canvas, boxes, color = "red", alpha = 0.95) {
-    const ctx = canvas.getContext("2d");
-    ctx.save();
-    ctx.strokeStyle = color;
+// -------------------------
+// Draw bounding boxes (filled translucent red overlay)
+// -------------------------
+function drawBoxes(canvas, boxes, color = "red", alpha = 0.35) {
+  const ctx = canvas.getContext("2d");
+  ctx.save();
+  ctx.strokeStyle = color;
+  ctx.fillStyle = color;
+  ctx.globalAlpha = alpha;
+  ctx.lineWidth = Math.max(2, Math.floor(canvas.width / 400));
+
+  for (const b of boxes) {
+    // Filled rectangle for strong visual ROI
+    ctx.fillRect(b.x, b.y, b.w, b.h);
+    // Optional border to emphasize edges
+    ctx.globalAlpha = 0.9;
+    ctx.strokeRect(b.x, b.y, b.w, b.h);
     ctx.globalAlpha = alpha;
-    ctx.lineWidth = Math.max(2, Math.floor(canvas.width / 400));
-    for (const b of boxes) {
-      ctx.strokeRect(b.x, b.y, b.w, b.h);
-    }
-    ctx.restore();
   }
+  ctx.restore();
+}
 
   // -------------------------
   // Main compare routine
@@ -242,10 +249,10 @@
       overlay.height = height;
       const oCtx = overlay.getContext("2d");
       oCtx.drawImage(b, 0, 0, width, height);
-
+      
       const boxes = findBoundingBoxes(diffImage.data, width, height, minBoxArea);
-      drawBoxes(overlay, boxes, "red", 0.95);
-
+      drawBoxes(overlay, boxes, "red", 0.35);
+      
       // Append to results
       const block = document.createElement("div");
       const title = document.createElement("div");
@@ -254,8 +261,9 @@
       title.style.margin = "8px 0";
       block.appendChild(title);
       block.appendChild(overlay);
-
+      
       if (results) results.appendChild(block);
+
     }
 
     if (pageCount === 0 && results) {

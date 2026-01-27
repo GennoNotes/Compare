@@ -1,4 +1,4 @@
-/* script.js — Diff-only PDF compare with smart page alignment (insert/delete tolerant)
+/* script.js — PDF comparison to highlight differences
    Expects globals (from index.html):
    - window.pdfjsLib
    - window.pixelmatch

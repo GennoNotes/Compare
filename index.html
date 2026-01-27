@@ -40,23 +40,33 @@
 
   <div class="controls">
     <label for="renderScale">Render Scale</label>
-    <input type="range" id="renderScale" min="1.0" max="3.0" step="0.25" value="2.0" />
+    <input type="range" id="renderScale" min="1.0" max="3.0" step="0.25" value="2.0"
+      title="Controls render resolution. Higher is sharper but slower."/>
     <div class="value" id="renderScaleVal">2.0</div>
 
     <label for="threshold">Pixel Threshold</label>
-    <input type="range" id="threshold" min="0.00" max="0.30" step="0.01" value="0.10" />
+    <input type="range" id="threshold" min="0.00" max="0.30" step="0.01" value="0.10"
+      title="Diff sensitivity. Lower detects more differences; higher detects fewer."/>
     <div class="value" id="thresholdVal">0.10</div>
 
-    <label for="alpha">Unchanged Fade</label>
-    <input type="range" id="alpha" min="0.00" max="0.50" step="0.01" value="0.10" />
+    <label for="alpha">Background Fade</label>
+    <input type="range" id="alpha" min="0.00" max="0.50" step="0.01" value="0.10"
+      title="How visible unchanged content is in the diff output. 0 = white background, higher = more of the page shows."/>
     <div class="value" id="alphaVal">0.10</div>
 
-    <label for="matchWindow">Page Match Score</label>
-    <input type="range" id="matchWindow" min="0" max="5" step="1" value="2" />
+    <label for="matchWindow">Extra Page Detection</label>
+    <input type="range" id="matchWindow" min="0" max="5" step="1" value="2"
+      title="Allows inserted/removed pages. Higher tolerates more consecutive inserts/deletes (slower, can drift if too high)."/>
     <div class="value" id="matchWindowVal">2</div>
 
+    <label for="gapPenalty">Gap Penalty</label>
+    <input type="range" id="gapPenalty" min="0.00" max="0.50" step="0.01" value="0.15"
+      title="How hard it tries to avoid calling a page 'inserted/deleted'. Higher = fewer inserts detected; lower = more inserts detected."/>
+    <div class="value" id="gapPenaltyVal">0.15</div>
+
     <label for="includeAA">Include Anti-Aliasing</label>
-    <input type="checkbox" id="includeAA" />
+    <input type="checkbox" id="includeAA"
+      title="Include edge-smoothing pixels in the diff calculation (can increase sensitivity to tiny edge changes)."/>
     <div class="value"></div>
   </div>
 
@@ -91,7 +101,7 @@
     }
 
     document.addEventListener("DOMContentLoaded", () => {
-      ["renderScale", "threshold", "alpha", "matchWindow"].forEach(bindRange);
+      ["renderScale", "threshold", "alpha", "matchWindow", "gapPenalty"].forEach(bindRange);
 
       document.getElementById("compareBtn").addEventListener("click", () => {
         if (typeof window.compare === "function") window.compare();

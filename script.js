@@ -1,4 +1,3 @@
-
 /* script.js — PDF visual diff with bounding boxes (client-side)
    Requires (loaded in index.html BEFORE this file):
      - pdf.js v4.x as global `pdfjsLib`

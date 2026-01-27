@@ -8,9 +8,6 @@
     if (el) el.textContent += String(msg) + NL;
   }
 
-  // If you see this in the console, script.js executed.
-  log("script.js loaded (start)");
-
   function mustGet(id) {
     const el = $(id);
     if (!el) throw new Error("Missing element #" + id);
@@ -30,11 +27,13 @@
     return pdfjsLib;
   }
 
-  async function renderPdfToCanvases(file, scale) {
+  async function loadPdf(file) {
     const pdfjsLib = assertLibraries();
     const buf = await file.arrayBuffer();
-    const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
+    return await pdfjsLib.getDocument({ data: buf }).promise;
+  }
 
+  async function renderPdfToCanvases(pdf, scale) {
     const canvases = [];
     for (let p = 1; p <= pdf.numPages; p++) {
       const page = await pdf.getPage(p);
@@ -48,6 +47,18 @@
       canvases.push(canvas);
     }
     return canvases;
+  }
+
+  async function extractPdfPageTexts(pdf) {
+    const texts = [];
+    for (let p = 1; p <= pdf.numPages; p++) {
+      const page = await pdf.getPage(p);
+      const tc = await page.getTextContent();
+      // Common pattern: join items[].str into a page string. [web:17][web:16]
+      const pageText = tc.items.map((it) => (it && it.str ? it.str : "")).join(" ");
+      texts.push(pageText);
+    }
+    return texts;
   }
 
   function downscaleCanvas(src, maxDim = 420) {
@@ -86,7 +97,8 @@
     return out;
   }
 
-  function pageDiffCost(aCanvas, bCanvas, threshold, includeAA) {
+  // Pixel cost in [0..1] using pixelmatch diff pixel count. [web:76]
+  function pagePixelCost(aCanvas, bCanvas, threshold, includeAA) {
     const aBand = cropVerticalBand(aCanvas, 0.12, 0.12);
     const bBand = cropVerticalBand(bCanvas, 0.12, 0.12);
     const { a, b, width, height } = cropToCommonSize(aBand, bBand);
@@ -99,18 +111,63 @@
     return diffCount / (width * height);
   }
 
+  function normalizeText(s) {
+    return (s || "")
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, " ")
+      .trim();
+  }
+
+  function tokenSet(s) {
+    const out = new Set();
+    for (const t of normalizeText(s).split(/\s+/)) {
+      if (t.length >= 3) out.add(t); // ignore tiny tokens/noise
+    }
+    return out;
+  }
+
+  // Jaccard similarity, then convert to cost (1 - similarity).
+  function jaccardCost(textA, textB) {
+    const A = tokenSet(textA);
+    const B = tokenSet(textB);
+    if (A.size === 0 && B.size === 0) return 0.5; // unknown: neutral
+    if (A.size === 0 || B.size === 0) return 1.0;
+
+    let inter = 0;
+    for (const x of A) if (B.has(x)) inter++;
+    const union = A.size + B.size - inter;
+    const sim = union ? inter / union : 0;
+    return 1 - sim;
+  }
+
+  // Combine text+pixel. Text is usually better for page identity when available.
+  function combinedCost(aIdx, bIdx, aSmall, bSmall, aText, bText, threshold, includeAA) {
+    const tCost = jaccardCost(aText[aIdx], bText[bIdx]);
+    const pCost = pagePixelCost(aSmall[aIdx], bSmall[bIdx], threshold, includeAA);
+
+    const aHasText = normalizeText(aText[aIdx]).length > 20;
+    const bHasText = normalizeText(bText[bIdx]).length > 20;
+
+    // If both have usable text, trust text more.
+    const wText = (aHasText && bHasText) ? 0.75 : 0.25;
+    return wText * tCost + (1 - wText) * pCost;
+  }
+
   function alignmentParamsFromMatchWindow(matchWindow) {
     const mw = Math.max(0, Math.min(5, matchWindow));
     const maxConsecutiveGaps = mw;
 
-    const gapPenalty = mw === 0 ? 999 : (0.24 - (mw * 0.036));
-    const badMatchCutoff = 0.50 - mw * 0.044;
-    const badMatchPenalty = mw * 0.036;
+    // Higher mw => cheaper gaps => easier to call an inserted page.
+    const gapPenalty = mw === 0 ? 999 : (0.22 - mw * 0.032); // 5 => 0.06
+
+    // “Bad match” discouragement.
+    const badMatchCutoff = 0.55 - mw * 0.05;
+    const badMatchPenalty = mw * 0.04;
 
     return { maxConsecutiveGaps, gapPenalty, badMatchCutoff, badMatchPenalty };
   }
 
-  async function buildAlignmentDP(pagesA, pagesB, opts) {
+  async function buildAlignmentDP(pagesA, pagesB, textsA, textsB, opts) {
     const { threshold, includeAA, matchWindow } = opts;
     const { maxConsecutiveGaps, gapPenalty, badMatchCutoff, badMatchPenalty } =
       alignmentParamsFromMatchWindow(matchWindow);
@@ -123,7 +180,7 @@
       const steps = [];
       const count = Math.min(n, m);
       for (let i = 0; i < count; i++) {
-        const c = pageDiffCost(aSmall[i], bSmall[i], threshold, includeAA);
+        const c = combinedCost(i, i, aSmall, bSmall, textsA, textsB, threshold, includeAA);
         steps.push({ type: "match", aIndex: i, bIndex: i, cost: c });
       }
       for (let i = count; i < n; i++) steps.push({ type: "deleteA", aIndex: i });
@@ -155,7 +212,7 @@
     function cost(i, j) {
       const k = key(i, j);
       if (cache.has(k)) return cache.get(k);
-      const v = pageDiffCost(aSmall[i], bSmall[j], threshold, includeAA);
+      const v = combinedCost(i, j, aSmall, bSmall, textsA, textsB, threshold, includeAA);
       cache.set(k, v);
       return v;
     }
@@ -200,6 +257,7 @@
       }
     }
     steps.reverse();
+
     return { steps, params: { maxConsecutiveGaps, gapPenalty, badMatchCutoff, badMatchPenalty } };
   }
 
@@ -255,7 +313,7 @@
     assertLibraries();
 
     const results = mustGet("results");
-    results.innerHTML = "Rendering PDFs…";
+    results.innerHTML = "Loading PDFs…";
 
     const renderScale = parseFloat(mustGet("renderScale").value);
     const threshold = parseFloat(mustGet("threshold").value);
@@ -263,33 +321,41 @@
     const includeAA = mustGet("includeAA").checked;
     const matchWindow = parseInt(mustGet("matchWindow").value, 10);
 
+    const [pdfA, pdfB] = await Promise.all([loadPdf(fileA), loadPdf(fileB)]);
+
+    results.innerHTML = "Extracting text…";
+    const [textsA, textsB] = await Promise.all([
+      extractPdfPageTexts(pdfA),
+      extractPdfPageTexts(pdfB)
+    ]);
+
+    results.innerHTML = "Rendering pages…";
     const [pagesA, pagesB] = await Promise.all([
-      renderPdfToCanvases(fileA, renderScale),
-      renderPdfToCanvases(fileB, renderScale)
+      renderPdfToCanvases(pdfA, renderScale),
+      renderPdfToCanvases(pdfB, renderScale)
     ]);
 
     results.innerHTML = "";
     log("A pages: " + pagesA.length + ", B pages: " + pagesB.length);
 
-    const aligned = await buildAlignmentDP(pagesA, pagesB, { threshold, includeAA, matchWindow });
-    const alignment = aligned.steps;
+    const aligned = await buildAlignmentDP(pagesA, pagesB, textsA, textsB, { threshold, includeAA, matchWindow });
     log("Alignment params: " + JSON.stringify(aligned.params));
 
-    for (const step of alignment) {
+    for (const step of aligned.steps) {
       const block = document.createElement("div");
       block.className = "block";
 
       if (step.type === "insertB") {
         block.appendChild(makeTitle("Inserted page in B: page " + (step.bIndex + 1), true));
-        block.appendChild(makeMeta("This page exists only in the new PDF (B)."));
+        block.appendChild(makeMeta("This page exists only in the updated PDF (B)."));
         block.appendChild(placeholderCanvas("Inserted page (no diff computed)."));
         results.appendChild(block);
         continue;
       }
 
       if (step.type === "deleteA") {
-        block.appendChild(makeTitle("Deleted from B (was in A): page " + (step.aIndex + 1), true));
-        block.appendChild(makeMeta("This page exists only in the old PDF (A)."));
+        block.appendChild(makeTitle("Removed page from B (was in A): page " + (step.aIndex + 1), true));
+        block.appendChild(makeMeta("This page exists only in the original PDF (A)."));
         block.appendChild(placeholderCanvas("Deleted page (no diff computed)."));
         results.appendChild(block);
         continue;
@@ -307,13 +373,12 @@
           " | similarity≈" + similarityPct + "%"
         )
       );
-      block.appendChild(makeMeta("Diff size: " + out.width + "×" + out.height));
+      block.appendChild(block.appendChild(makeMeta("Diff size: " + out.width + "×" + out.height)));
       block.appendChild(out.diffCanvas);
       results.appendChild(block);
     }
   }
 
-  // Define compare() globally (this MUST execute or button will complain)
   window.compare = async function compare() {
     try {
       const fileA = $("pdfA")?.files?.[0] || null;
@@ -334,5 +399,5 @@
     }
   };
 
-  log("script.js loaded (end); window.compare is ready.");
+  log("script.js loaded; window.compare is ready.");
 })();

@@ -54,7 +54,7 @@
     for (let p = 1; p <= pdf.numPages; p++) {
       const page = await pdf.getPage(p);
       const tc = await page.getTextContent();
-      // Common pattern: join items[].str into a page string. [web:17][web:16]
+      // Join items[].str into a page string. [web:16][web:17]
       const pageText = tc.items.map((it) => (it && it.str ? it.str : "")).join(" ");
       texts.push(pageText);
     }
@@ -97,7 +97,6 @@
     return out;
   }
 
-  // Pixel cost in [0..1] using pixelmatch diff pixel count. [web:76]
   function pagePixelCost(aCanvas, bCanvas, threshold, includeAA) {
     const aBand = cropVerticalBand(aCanvas, 0.12, 0.12);
     const bBand = cropVerticalBand(bCanvas, 0.12, 0.12);
@@ -121,16 +120,15 @@
   function tokenSet(s) {
     const out = new Set();
     for (const t of normalizeText(s).split(/\s+/)) {
-      if (t.length >= 3) out.add(t); // ignore tiny tokens/noise
+      if (t.length >= 3) out.add(t);
     }
     return out;
   }
 
-  // Jaccard similarity, then convert to cost (1 - similarity).
   function jaccardCost(textA, textB) {
     const A = tokenSet(textA);
     const B = tokenSet(textB);
-    if (A.size === 0 && B.size === 0) return 0.5; // unknown: neutral
+    if (A.size === 0 && B.size === 0) return 0.5;
     if (A.size === 0 || B.size === 0) return 1.0;
 
     let inter = 0;
@@ -140,15 +138,14 @@
     return 1 - sim;
   }
 
-  // Combine text+pixel. Text is usually better for page identity when available.
-  function combinedCost(aIdx, bIdx, aSmall, bSmall, aText, bText, threshold, includeAA) {
-    const tCost = jaccardCost(aText[aIdx], bText[bIdx]);
+  function combinedCost(aIdx, bIdx, aSmall, bSmall, aText, bText, threshold, includeAA, scanned) {
     const pCost = pagePixelCost(aSmall[aIdx], bSmall[bIdx], threshold, includeAA);
+    if (scanned) return pCost;
 
+    const tCost = jaccardCost(aText[aIdx], bText[bIdx]);
     const aHasText = normalizeText(aText[aIdx]).length > 20;
     const bHasText = normalizeText(bText[bIdx]).length > 20;
 
-    // If both have usable text, trust text more.
     const wText = (aHasText && bHasText) ? 0.75 : 0.25;
     return wText * tCost + (1 - wText) * pCost;
   }
@@ -157,10 +154,7 @@
     const mw = Math.max(0, Math.min(5, matchWindow));
     const maxConsecutiveGaps = mw;
 
-    // Higher mw => cheaper gaps => easier to call an inserted page.
     const gapPenalty = mw === 0 ? 999 : (0.22 - mw * 0.032); // 5 => 0.06
-
-    // “Bad match” discouragement.
     const badMatchCutoff = 0.55 - mw * 0.05;
     const badMatchPenalty = mw * 0.04;
 
@@ -168,7 +162,7 @@
   }
 
   async function buildAlignmentDP(pagesA, pagesB, textsA, textsB, opts) {
-    const { threshold, includeAA, matchWindow } = opts;
+    const { threshold, includeAA, matchWindow, scanned } = opts;
     const { maxConsecutiveGaps, gapPenalty, badMatchCutoff, badMatchPenalty } =
       alignmentParamsFromMatchWindow(matchWindow);
 
@@ -180,7 +174,7 @@
       const steps = [];
       const count = Math.min(n, m);
       for (let i = 0; i < count; i++) {
-        const c = combinedCost(i, i, aSmall, bSmall, textsA, textsB, threshold, includeAA);
+        const c = combinedCost(i, i, aSmall, bSmall, textsA, textsB, threshold, includeAA, scanned);
         steps.push({ type: "match", aIndex: i, bIndex: i, cost: c });
       }
       for (let i = count; i < n; i++) steps.push({ type: "deleteA", aIndex: i });
@@ -212,7 +206,7 @@
     function cost(i, j) {
       const k = key(i, j);
       if (cache.has(k)) return cache.get(k);
-      const v = combinedCost(i, j, aSmall, bSmall, textsA, textsB, threshold, includeAA);
+      const v = combinedCost(i, j, aSmall, bSmall, textsA, textsB, threshold, includeAA, scanned);
       cache.set(k, v);
       return v;
     }
@@ -303,6 +297,7 @@
     const ctx = diffCanvas.getContext("2d");
     const diffImage = ctx.createImageData(width, height);
 
+    // pixelmatch supports alpha/includeAA/threshold/diffColor options. [web:51]
     const diffCount = window.pixelmatch(aImg.data, bImg.data, diffImage.data, width, height, pixelOpts);
     ctx.putImageData(diffImage, 0, 0);
 
@@ -320,14 +315,21 @@
     const alpha = parseFloat(mustGet("alpha").value);
     const includeAA = mustGet("includeAA").checked;
     const matchWindow = parseInt(mustGet("matchWindow").value, 10);
+    const scanned = $("scanned") ? $("scanned").checked : false;
 
     const [pdfA, pdfB] = await Promise.all([loadPdf(fileA), loadPdf(fileB)]);
 
-    results.innerHTML = "Extracting text…";
-    const [textsA, textsB] = await Promise.all([
-      extractPdfPageTexts(pdfA),
-      extractPdfPageTexts(pdfB)
-    ]);
+    let textsA = [], textsB = [];
+    if (!scanned) {
+      results.innerHTML = "Extracting text…";
+      [textsA, textsB] = await Promise.all([
+        extractPdfPageTexts(pdfA),
+        extractPdfPageTexts(pdfB)
+      ]);
+    } else {
+      textsA = Array.from({ length: pdfA.numPages }, () => "");
+      textsB = Array.from({ length: pdfB.numPages }, () => "");
+    }
 
     results.innerHTML = "Rendering pages…";
     const [pagesA, pagesB] = await Promise.all([
@@ -336,9 +338,15 @@
     ]);
 
     results.innerHTML = "";
-    log("A pages: " + pagesA.length + ", B pages: " + pagesB.length);
+    log("A pages: " + pagesA.length + ", B pages: " + pagesB.length + ", scanned=" + scanned);
 
-    const aligned = await buildAlignmentDP(pagesA, pagesB, textsA, textsB, { threshold, includeAA, matchWindow });
+    const aligned = await buildAlignmentDP(pagesA, pagesB, textsA, textsB, {
+      threshold,
+      includeAA,
+      matchWindow,
+      scanned
+    });
+
     log("Alignment params: " + JSON.stringify(aligned.params));
 
     for (const step of aligned.steps) {
@@ -346,34 +354,39 @@
       block.className = "block";
 
       if (step.type === "insertB") {
-        block.appendChild(makeTitle("Inserted page in B: page " + (step.bIndex + 1), true));
-        block.appendChild(makeMeta("This page exists only in the updated PDF (B)."));
+        block.appendChild(makeTitle("Inserted page in Updated File: page " + (step.bIndex + 1), true));
+        block.appendChild(makeMeta("This page exists only in the updated PDF."));
         block.appendChild(placeholderCanvas("Inserted page (no diff computed)."));
         results.appendChild(block);
         continue;
       }
 
       if (step.type === "deleteA") {
-        block.appendChild(makeTitle("Removed page from B (was in A): page " + (step.aIndex + 1), true));
-        block.appendChild(makeMeta("This page exists only in the original PDF (A)."));
-        block.appendChild(placeholderCanvas("Deleted page (no diff computed)."));
+        block.appendChild(makeTitle("Removed from Updated File (was in Original): page " + (step.aIndex + 1), true));
+        block.appendChild(makeMeta("This page exists only in the original PDF."));
+        block.appendChild(placeholderCanvas("Removed page (no diff computed)."));
         results.appendChild(block);
         continue;
       }
 
-      const pixelOpts = { threshold, includeAA, alpha, diffColor: [255, 0, 0] };
+      const pixelOpts = {
+        threshold,
+        includeAA,
+        alpha,
+        diffColor: [255, 0, 0]
+      };
 
       const out = diffOnlyCanvas(pagesA[step.aIndex], pagesB[step.bIndex], pixelOpts);
       const similarityPct = Math.max(0, 100 - step.cost * 100).toFixed(2);
 
       block.appendChild(
         makeTitle(
-          "A " + (step.aIndex + 1) + " ↔ B " + (step.bIndex + 1) +
+          "Original " + (step.aIndex + 1) + " ↔ Updated " + (step.bIndex + 1) +
           " | diffPixels=" + out.diffCount +
           " | similarity≈" + similarityPct + "%"
         )
       );
-      block.appendChild(block.appendChild(makeMeta("Diff size: " + out.width + "×" + out.height)));
+      block.appendChild(makeMeta("Diff size: " + out.width + "×" + out.height));
       block.appendChild(out.diffCanvas);
       results.appendChild(block);
     }
@@ -385,7 +398,7 @@
       const fileB = $("pdfB")?.files?.[0] || null;
 
       if (!fileA || !fileB) {
-        alert("Please choose two PDF files first.");
+        alert("Please choose both PDF files first.");
         return;
       }
 

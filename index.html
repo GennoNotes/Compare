@@ -14,10 +14,11 @@
     .controls label { display: inline-block; width: 140px; margin: 4px 8px 4px 0; }
     .controls input[type="range"] { width: 120px; }
     .controls span { font-size: 0.9em; color: #666; }
+    .page-match-info { font-size: 0.9em; color: #888; margin-top: 4px; }
   </style>
 </head>
 <body>
-  <h2>Compare Two PDFs (Image Difference Mode)</h2>
+  <h2>Compare Two PDFs (Smart Page Alignment)</h2>
 
   <input type="file" id="pdfA" accept="application/pdf" />
   <input type="file" id="pdfB" accept="application/pdf" />
@@ -40,7 +41,7 @@
   <div id="results"></div>
   <div id="log"></div>
 
-  <!-- pdf.js (pdfjs-dist) pinned to a specific version -->
+  <!-- pdf.js and pixelmatch -->
   <script type="module">
     import * as pdfjsLib from "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.0.379/build/pdf.min.mjs";
     window.pdfjsLib = pdfjsLib;
@@ -49,41 +50,23 @@
         "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.0.379/build/pdf.worker.min.mjs";
     }
   </script>
-
-  <!-- pixelmatch pinned to a specific version, exposed as window.pixelmatch -->
   <script type="module">
     import pixelmatchImport from "https://esm.run/pixelmatch@5.3.0";
     window.pixelmatch = pixelmatchImport;
   </script>
 
-  <!-- your main comparison logic -->
   <script src="script.js"></script>
-
-  <!-- button wiring + controls -->
   <script>
     document.addEventListener("DOMContentLoaded", function () {
-      var btn = document.getElementById("compareBtn");
-      btn.addEventListener("click", function () {
-        if (typeof window.compare === "function") {
-          window.compare();
-        } else {
-          alert("Compare function is not loaded. Open DevTools → Network to verify script.js (HTTP 200).");
-          console.error("window.compare is not defined.");
-        }
+      document.getElementById("compareBtn").addEventListener("click", function () {
+        if (typeof window.compare === "function") window.compare();
       });
 
-      // Wire up sliders
-      const sliders = [
-        { id: "renderScale", val: "renderScaleVal" },
-        { id: "threshold", val: "thresholdVal" },
-        { id: "minBoxArea", val: "minBoxAreaVal" }
-      ];
-      sliders.forEach(({ id, val }) => {
+      // Wire sliders
+      ["renderScale", "threshold", "minBoxArea"].forEach(id => {
         const slider = document.getElementById(id);
-        const span = document.getElementById(val);
-        slider.addEventListener("input", () => {
-          span.textContent = slider.value;
-        });
+        const span = document.getElementById(id + "Val");
+        slider.addEventListener("input", () => span.textContent = slider.value);
       });
     });
   </script>

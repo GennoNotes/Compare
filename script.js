@@ -1,6 +1,6 @@
 /* script.js — PDF comparison to highlight differences (diff image only)
-   - Robust “extra page detection” using DP alignment (edit-distance style).
-   - Alignment cost ignores headers/footers by comparing only a vertical band.
+   - One user control for extra page detection: matchWindow (0..5).
+   - DP alignment with an automatic gap penalty + “bad match cutoff” so inserted pages win.
    Expects globals:
    - window.pdfjsLib
    - window.pixelmatch
@@ -56,12 +56,11 @@
   }
 
   function downscaleCanvas(src, maxDim = 420) {
-    const scale = Math.min(1, maxDim / Math.max(src.width, src.height));
-    if (scale >= 1) return src;
-
+    const s = Math.min(1, maxDim / Math.max(src.width, src.height));
+    if (s >= 1) return src;
     const c = document.createElement("canvas");
-    c.width = Math.max(1, Math.floor(src.width * scale));
-    c.height = Math.max(1, Math.floor(src.height * scale));
+    c.width = Math.max(1, Math.floor(src.width * s));
+    c.height = Math.max(1, Math.floor(src.height * s));
     c.getContext("2d").drawImage(src, 0, 0, c.width, c.height);
     return c;
   }
@@ -81,12 +80,11 @@
     return { a, b, width, height };
   }
 
-  // Crop a middle “content band” so headers/footers/page numbers don't dominate alignment.
+  // Ignore headers/footers to improve page matching.
   function cropVerticalBand(canvas, topFrac = 0.12, bottomFrac = 0.12) {
     const w = canvas.width, h = canvas.height;
     const y = Math.floor(h * topFrac);
     const bandH = Math.max(1, Math.floor(h * (1 - topFrac - bottomFrac)));
-
     const out = document.createElement("canvas");
     out.width = w;
     out.height = bandH;
@@ -94,45 +92,59 @@
     return out;
   }
 
-  // Cost in [0..1]: 0 identical, 1 very different.
-  // Uses a band-crop (header/footer ignored) for better “inserted page” detection.
+  // Cost in [0..1], based on mismatched pixels / total pixels. [web:76]
   function pageDiffCost(aCanvas, bCanvas, threshold, includeAA) {
     const aBand = cropVerticalBand(aCanvas, 0.12, 0.12);
     const bBand = cropVerticalBand(bCanvas, 0.12, 0.12);
-
     const { a, b, width, height } = cropToCommonSize(aBand, bBand);
+
     const aImg = a.getContext("2d").getImageData(0, 0, width, height);
     const bImg = b.getContext("2d").getImageData(0, 0, width, height);
 
-    // pixelmatch returns the number of mismatched pixels. [web:76][web:112]
     const out = new Uint8ClampedArray(width * height * 4);
     const diffCount = window.pixelmatch(aImg.data, bImg.data, out, width, height, { threshold, includeAA });
-
     return diffCount / (width * height);
   }
 
-  // DP alignment to handle inserted/removed pages.
-  // maxConsecutiveGaps (from your matchWindow slider) limits drift.
+  // Convert ONE slider into internal alignment parameters.
+  // Higher matchWindow => allow more gaps and make gaps cheaper (more willing to insert/delete).
+  function alignmentParamsFromMatchWindow(matchWindow) {
+    // 0: basically no alignment (index-to-index compare)
+    // 5: very insertion-friendly
+    const mw = Math.max(0, Math.min(5, matchWindow));
+
+    // Maximum consecutive gaps allowed.
+    const maxConsecutiveGaps = mw;
+
+    // Gap penalty (cost of “skip a page”).
+    // We want: more detection => lower gap penalty.
+    // Tuned range: [0.06 .. 0.24]
+    const gapPenalty = mw === 0 ? 999 : (0.24 - (mw * 0.036)); // 0->999, 5->0.06
+
+    // “Bad match” cutoff: if a page-to-page cost is worse than this,
+    // we discourage matching and prefer gaps.
+    // Range: [0.50 .. 0.28] (more detection => stricter)
+    const badMatchCutoff = 0.50 - mw * 0.044;
+
+    // Extra penalty added when match is “bad”.
+    // Range: [0.00 .. 0.18] (more detection => stronger push to gaps)
+    const badMatchPenalty = mw * 0.036;
+
+    return { maxConsecutiveGaps, gapPenalty, badMatchCutoff, badMatchPenalty };
+  }
+
   async function buildAlignmentDP(pagesA, pagesB, opts) {
-    const threshold = opts.threshold;
-    const includeAA = opts.includeAA;
-    const maxConsecutiveGaps = opts.maxConsecutiveGaps;
-    const gapPenalty = opts.gapPenalty;
+    const { threshold, includeAA, matchWindow } = opts;
+
+    const { maxConsecutiveGaps, gapPenalty, badMatchCutoff, badMatchPenalty } =
+      alignmentParamsFromMatchWindow(matchWindow);
 
     const aSmall = pagesA.map((c) => downscaleCanvas(c));
     const bSmall = pagesB.map((c) => downscaleCanvas(c));
-
     const n = aSmall.length, m = bSmall.length;
 
-    const dp = Array.from({ length: n + 1 }, () => new Float32Array(m + 1).fill(Infinity));
-    const back = Array.from({ length: n + 1 }, () => new Int8Array(m + 1)); // 0 diag, 1 up, 2 left
-    const gapA = Array.from({ length: n + 1 }, () => new Int16Array(m + 1)); // consecutive up
-    const gapB = Array.from({ length: n + 1 }, () => new Int16Array(m + 1)); // consecutive left
-
-    dp[0][0] = 0;
-
-    // If user sets 0, treat as "no gaps allowed": only compare min(n,m) pages by index.
-    if (maxConsecutiveGaps === 0) {
+    // matchWindow=0 => no “smart matching”, just compare by index
+    if (matchWindow === 0) {
       const steps = [];
       const count = Math.min(n, m);
       for (let i = 0; i < count; i++) {
@@ -141,18 +153,25 @@
       }
       for (let i = count; i < n; i++) steps.push({ type: "deleteA", aIndex: i });
       for (let j = count; j < m; j++) steps.push({ type: "insertB", bIndex: j });
-      return steps;
+      return { steps, params: { maxConsecutiveGaps, gapPenalty, badMatchCutoff, badMatchPenalty } };
     }
+
+    const dp = Array.from({ length: n + 1 }, () => new Float32Array(m + 1).fill(Infinity));
+    const back = Array.from({ length: n + 1 }, () => new Int8Array(m + 1)); // 0 diag, 1 up, 2 left
+    const gapA = Array.from({ length: n + 1 }, () => new Int16Array(m + 1));
+    const gapB = Array.from({ length: n + 1 }, () => new Int16Array(m + 1));
+
+    dp[0][0] = 0;
 
     for (let i = 1; i <= n; i++) {
       dp[i][0] = dp[i - 1][0] + gapPenalty;
       back[i][0] = 1;
-      gapA[i][0] = Math.min(32767, gapA[i - 1][0] + 1);
+      gapA[i][0] = gapA[i - 1][0] + 1;
     }
     for (let j = 1; j <= m; j++) {
       dp[0][j] = dp[0][j - 1] + gapPenalty;
       back[0][j] = 2;
-      gapB[0][j] = Math.min(32767, gapB[0][j - 1] + 1);
+      gapB[0][j] = gapB[0][j - 1] + 1;
     }
 
     const cache = new Map();
@@ -168,7 +187,12 @@
 
     for (let i = 1; i <= n; i++) {
       for (let j = 1; j <= m; j++) {
-        const cDiag = dp[i - 1][j - 1] + cost(i - 1, j - 1);
+        let matchCost = cost(i - 1, j - 1);
+
+        // If the match is “bad”, make diagonal more expensive so DP prefers insertion/deletion.
+        if (matchCost > badMatchCutoff) matchCost += badMatchPenalty;
+
+        const cDiag = dp[i - 1][j - 1] + matchCost;
 
         let cUp = Infinity;
         if (gapA[i - 1][j] < maxConsecutiveGaps) cUp = dp[i - 1][j] + gapPenalty;
@@ -195,14 +219,13 @@
       }
     }
 
-    // Backtrack into steps
     const steps = [];
     let i = n, j = m;
     while (i > 0 || j > 0) {
       const move = back[i][j];
       if (move === 0) {
-        const c = cache.get(key(i - 1, j - 1)) ?? 1;
-        steps.push({ type: "match", aIndex: i - 1, bIndex: j - 1, cost: c });
+        const rawCost = cache.get(key(i - 1, j - 1)) ?? 1;
+        steps.push({ type: "match", aIndex: i - 1, bIndex: j - 1, cost: rawCost });
         i--; j--;
       } else if (move === 1) {
         steps.push({ type: "deleteA", aIndex: i - 1 });
@@ -213,7 +236,8 @@
       }
     }
     steps.reverse();
-    return steps;
+
+    return { steps, params: { maxConsecutiveGaps, gapPenalty, badMatchCutoff, badMatchPenalty } };
   }
 
   function makeTitle(text, warn) {
@@ -258,7 +282,7 @@
     const ctx = diffCanvas.getContext("2d");
     const diffImage = ctx.createImageData(width, height);
 
-    const diffCount = window.pixelmatch(aImg.data, bImg.data, diffImage.data, width, height, pixelOpts);
+    const diffCount = window.pixelmatch(aImg.data, bImg.data, diffImage.data, width, height, pixelOpts); // [web:76]
     ctx.putImageData(diffImage, 0, 0);
 
     return { diffCanvas, diffCount, width, height };
@@ -274,13 +298,7 @@
     const threshold = parseFloat(mustGet("threshold").value);
     const alpha = parseFloat(mustGet("alpha").value);
     const includeAA = mustGet("includeAA").checked;
-
-    // matchWindow acts as max consecutive gaps allowed.
     const matchWindow = parseInt(mustGet("matchWindow").value, 10);
-
-    // optional (if not present for some reason)
-    const gapPenaltyEl = $("gapPenalty");
-    const gapPenalty = gapPenaltyEl ? parseFloat(gapPenaltyEl.value) : 0.15;
 
     const [pagesA, pagesB] = await Promise.all([
       renderPdfToCanvases(fileA, renderScale),
@@ -290,12 +308,16 @@
     results.innerHTML = "";
     log("A pages: " + pagesA.length + ", B pages: " + pagesB.length);
 
-    const alignment = await buildAlignmentDP(pagesA, pagesB, {
-      threshold,
-      includeAA,
-      maxConsecutiveGaps: matchWindow,
-      gapPenalty
-    });
+    const aligned = await buildAlignmentDP(pagesA, pagesB, { threshold, includeAA, matchWindow });
+    const alignment = aligned.steps;
+    const params = aligned.params;
+
+    log(
+      "Alignment params: maxGaps=" + params.maxConsecutiveGaps +
+      ", gapPenalty=" + params.gapPenalty.toFixed(3) +
+      ", badMatchCutoff=" + params.badMatchCutoff.toFixed(3) +
+      ", badMatchPenalty=" + params.badMatchPenalty.toFixed(3)
+    );
 
     for (const step of alignment) {
       const block = document.createElement("div");
@@ -317,7 +339,6 @@
         continue;
       }
 
-      // Pixelmatch options: threshold, includeAA, alpha, diffColor, etc. [web:76]
       const pixelOpts = {
         threshold,
         includeAA,
@@ -326,7 +347,6 @@
       };
 
       const out = diffOnlyCanvas(pagesA[step.aIndex], pagesB[step.bIndex], pixelOpts);
-
       const similarityPct = Math.max(0, 100 - step.cost * 100).toFixed(2);
 
       block.appendChild(
@@ -341,13 +361,10 @@
           "Diff size: " + out.width + "×" + out.height +
           " | threshold=" + threshold +
           " | alpha=" + alpha +
-          " | includeAA=" + includeAA +
-          " | gapPenalty=" + gapPenalty +
-          " | maxGaps=" + matchWindow
+          " | includeAA=" + includeAA
         )
       );
       block.appendChild(out.diffCanvas);
-
       results.appendChild(block);
     }
   }

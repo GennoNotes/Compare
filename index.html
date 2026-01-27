@@ -23,22 +23,29 @@
   <div id="results"></div>
   <div id="log"></div>
 
-  <!-- pdf.js -->
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.0.379/pdf.min.js"></script>
+  <!-- pdf.js (pdfjs-dist) pinned to a specific version -->
+  <script type="module">
+    import * as pdfjsLib from "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.0.379/build/pdf.min.mjs";
 
-  <script>
-    if (window.pdfjsLib && window.pdfjsLib.GlobalWorkerOptions) {
-      window.pdfjsLib.GlobalWorkerOptions.workerSrc =
-        "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.0.379/pdf.worker.min.js";
+    // Expose as a global for script.js
+    window.pdfjsLib = pdfjsLib;
+
+    if (pdfjsLib.GlobalWorkerOptions) {
+      pdfjsLib.GlobalWorkerOptions.workerSrc =
+        "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.0.379/build/pdf.worker.min.mjs";
     }
   </script>
 
-  <!-- pixelmatch UMD build exposed as window.pixelmatch -->
-  <script src="https://cdn.jsdelivr.net/npm/pixelmatch@5.3.0/dist/pixelmatch.umd.js"></script>
+  <!-- pixelmatch pinned to a specific version, exposed as window.pixelmatch -->
+  <script type="module">
+    import pixelmatchImport from "https://esm.run/pixelmatch@5.3.0";
+    window.pixelmatch = pixelmatchImport;
+  </script>
 
-  <!-- your main script -->
+  <!-- your main comparison logic (must be AFTER the modules above) -->
   <script src="script.js"></script>
 
+  <!-- button wiring -->
   <script>
     document.addEventListener("DOMContentLoaded", function () {
       var btn = document.getElementById("compareBtn");

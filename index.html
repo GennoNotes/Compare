@@ -15,29 +15,26 @@
 <body>
   <h2>Compare Two PDFs (Image Difference Mode)</h2>
 
-  <input type="file" id="pdfA" accept="application/pdf" />
-  <input type="file" id="pdfB" accept="application/pdf" />
-  <button onclick="compareInternal()">Compare</button>
+  <input type="file" id="pdfA" accept="application/pdf">
+  <input type="file" id="pdfB" accept="application/pdf">
+  <button onclick="compare()">Compare</button>
 
   <h3>Differences (highlighted in red):</h3>
   <div id="results"></div>
   <div id="log"></div>
 
-  <!-- pdf.js core -->
-  https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.0.379/pdf.min.js</script>
-  <!-- Set the pdf.js worker (v4 requires this) -->
+  <!-- pdf.js -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.0.379/pdf.min
+  <!-- pdf.js worker (required for v4) -->
   <script>
-    if (window.pdfjsLib) {
-      pdfjsLib.GlobalWorkerOptions.workerSrc =
-        'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.0.379/pdf.worker.min.js';
-    }
+    pdfjsLib.GlobalWorkerOptions.workerSrc =
+      "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.0.379/pdf.worker.min.js";
   </script>
 
-  <!-- pixelmatch (UMD build exposes global `pixelmatch`) -->
-  https://cdn.jsdelivr.net/npm/pixelmatch@5.3.0/dist/pixelmatch.umd.js</script>
+  <!-- pixelmatch UMD (global pixelmatch function) -->
+  https://cdn.jsdelivr.net/npm/pixelmatch@5.3.0/dist/pixelmatch.umd.js
 
-  <!-- your app (defines window.compare) -->
-  ./script.js</script>
+  <!-- your app code -->
+  script.js</script>
 </body>
 </html>
-``

@@ -24,21 +24,16 @@
   <div id="results"></div>
   <div id="log"></div>
 
-  <!-- Load libraries (defer executes after HTML is parsed, in order) -->
   https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.0.379/pdf.min.js</script>
   <script defer>
-    // Set worker for pdf.js v4 after DOM is ready
     document.addEventListener("DOMContentLoaded", function () {
       if (window.pdfjsLib && window.pdfjsLib.GlobalWorkerOptions) {
-        window.pdfjsLib.GlobalWorkerOptions.workerSrc =
-          "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.0.379/pdf.worker.min.js";
+        window.pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.0.379/pdf.worker.min.js";
       }
     });
   </script>
   https://cdn.jsdelivr.net/npm/pixelmatch@5.3.0/dist/pixelmatch.umd.js</script>
   script.js</script>
-
-  <!-- Bind the button after DOM is ready -->
   <script>
     document.addEventListener("DOMContentLoaded", function () {
       var btn = document.getElementById("compareBtn");
@@ -46,12 +41,11 @@
         if (typeof window.compare === "function") {
           window.compare();
         } else {
-          console.error("window.compare is not defined. Check that script.js loaded without errors.");
-          alert("Compare function is not loaded. Open DevTools → Network to verify script.js (200 OK).");
+          alert("Compare function is not loaded. Check DevTools → Network for script.js (200 OK).");
+          console.error("window.compare is not defined.");
         }
       });
     });
   </script>
 </body>
 </html>
-``

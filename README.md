@@ -1,2 +1,2 @@
-# GennoCompare
+# Genno Compare
 Compare Anything!

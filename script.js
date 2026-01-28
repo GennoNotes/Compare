@@ -24,6 +24,7 @@
     if (!window.pixelmatch || typeof window.pixelmatch !== "function") {
       throw new Error("pixelmatch missing (window.pixelmatch).");
     }
+    if (!window.html2pdf) throw new Error("html2pdf missing (html2pdf.bundle.min.js).");
     return pdfjsLib;
   }
 
@@ -302,7 +303,7 @@
     return { diffCanvas, diffCount, width, height };
   }
 
-  // Store results for PDF download
+  // Stored for PDF download
   let lastResults = null;
 
   async function runCompare(fileA, fileB) {
@@ -323,10 +324,7 @@
     let textsA = [], textsB = [];
     if (!scanned) {
       results.innerHTML = "Extracting text…";
-      [textsA, textsB] = await Promise.all([
-        extractPdfPageTexts(pdfA),
-        extractPdfPageTexts(pdfB)
-      ]);
+      [textsA, textsB] = await Promise.all([extractPdfPageTexts(pdfA), extractPdfPageTexts(pdfB)]);
     } else {
       textsA = Array.from({ length: pdfA.numPages }, () => "");
       textsB = Array.from({ length: pdfB.numPages }, () => "");
@@ -348,21 +346,15 @@
       scanned
     });
 
-    log("Alignment params: " + JSON.stringify(aligned.params));
+    const pixelOpts = { threshold, includeAA, alpha, diffColor: [255, 0, 0] };
 
-    const pixelOpts = {
-      threshold,
-      includeAA,
-      alpha,
-      diffColor: [255, 0, 0]
-    };
-
-    // Store for download
     lastResults = {
       steps: aligned.steps,
       pagesA,
       pagesB,
-      pixelOpts
+      pixelOpts,
+      fileAName: fileA.name,
+      fileBName: fileB.name
     };
 
     for (const step of aligned.steps) {
@@ -370,7 +362,7 @@
       block.className = "block";
 
       if (step.type === "insertB") {
-        block.appendChild(makeTitle("Inserted page in Updated File: page " + (step.bIndex + 1), true));
+        block.appendChild(makeTitle(`Inserted page in ${fileB.name}: Page ${step.bIndex + 1}`, true));
         block.appendChild(makeMeta("This page exists only in the updated PDF."));
         block.appendChild(placeholderCanvas("Inserted page (no diff computed)."));
         results.appendChild(block);
@@ -378,7 +370,7 @@
       }
 
       if (step.type === "deleteA") {
-        block.appendChild(makeTitle("Removed from Updated File (was in Original): page " + (step.aIndex + 1), true));
+        block.appendChild(makeTitle(`Removed from ${fileB.name} (exists in ${fileA.name}): Page ${step.aIndex + 1}`, true));
         block.appendChild(makeMeta("This page exists only in the original PDF."));
         block.appendChild(placeholderCanvas("Removed page (no diff computed)."));
         results.appendChild(block);
@@ -387,20 +379,17 @@
 
       const out = diffOnlyCanvas(pagesA[step.aIndex], pagesB[step.bIndex], pixelOpts);
       const similarityPct = Math.max(0, 100 - step.cost * 100).toFixed(2);
+      const aLabel = `${fileA.name} Page ${step.aIndex + 1}`;
+      const bLabel = `${fileB.name} Page ${step.bIndex + 1}`;
 
       block.appendChild(
-        makeTitle(
-          "Original " + (step.aIndex + 1) + " ↔ Updated " + (step.bIndex + 1) +
-          " | diffPixels=" + out.diffCount +
-          " | similarity≈" + similarityPct + "%"
-        )
+        makeTitle(`${aLabel} ↔ ${bLabel} | diffPixels=${out.diffCount} | similarity≈${similarityPct}%`)
       );
       block.appendChild(makeMeta("Diff size: " + out.width + "×" + out.height));
       block.appendChild(out.diffCanvas);
       results.appendChild(block);
     }
 
-    // Enable download button
     const dlBtn = $("downloadPdfBtn");
     if (dlBtn) {
       dlBtn.disabled = false;
@@ -438,93 +427,108 @@
       const dlBtn = $("downloadPdfBtn");
       if (dlBtn) dlBtn.disabled = true;
 
-      log("Building PDF…");
+      const { steps, pagesA, pagesB, pixelOpts, fileAName, fileBName } = lastResults;
+      const largeReport = $("largeReport") ? $("largeReport").checked : false;
 
-      const { steps, pagesA, pagesB, pixelOpts } = lastResults;
+      // For large reports, reduce scale and use JPEG to reduce memory/file size (canvas limits vary by device/browser). [web:240][web:220]
+      const exportScale = largeReport ? 1 : 2;
+      const exportImageType = largeReport ? "jpeg" : "png";
+      const exportQuality = largeReport ? 0.80 : 0.98;
+      const mime = exportImageType === "jpeg" ? "image/jpeg" : "image/png";
 
-      // Create a temporary container for html2pdf to capture
+      log(`Building PDF… (largeReport=${largeReport}, scale=${exportScale}, image=${exportImageType})`);
+
       const container = document.createElement("div");
-      container.style.padding = "20px";
+      container.style.padding = "16px";
       container.style.backgroundColor = "white";
+      container.style.color = "black";
+      container.style.fontFamily = "Arial, sans-serif";
 
-      // Add title
-      const title = document.createElement("h1");
-      title.textContent = "PDF Comparison Report";
-      container.appendChild(title);
+      const h1 = document.createElement("h1");
+      h1.textContent = "PDF Comparison Report";
+      h1.style.margin = "0 0 6px 0";
+      container.appendChild(h1);
 
-      const timestamp = new Date().toLocaleString();
-      const meta = document.createElement("p");
-      meta.textContent = "Generated on: " + timestamp;
+      const meta = document.createElement("div");
+      meta.textContent = `${fileAName} vs ${fileBName} — Generated ${new Date().toLocaleString()}`;
       meta.style.color = "#666";
-      meta.style.marginBottom = "20px";
+      meta.style.marginBottom = "16px";
       container.appendChild(meta);
 
-      // Add each diff result
       for (const step of steps) {
         const section = document.createElement("div");
-        section.style.marginBottom = "30px";
-        section.style.paddingBottom = "20px";
-        section.style.borderBottom = "1px solid #ddd";
+        // Force a page break after each section using legacy class + CSS mode. [web:208]
+        section.className = "pdf-report-section html2pdf__page-break";
+        section.style.paddingBottom = "12px";
+
+        const title = document.createElement("h2");
+        title.style.margin = "0 0 8px 0";
 
         if (step.type === "insertB") {
-          const title = document.createElement("h2");
-          title.textContent = "Inserted page in Updated File: page " + (step.bIndex + 1);
+          title.textContent = `Inserted page in ${fileBName}: Page ${step.bIndex + 1}`;
           title.style.color = "#8a5a00";
           section.appendChild(title);
 
-          const note = document.createElement("p");
+          const note = document.createElement("div");
           note.textContent = "This page exists only in the updated PDF.";
           note.style.color = "#666";
           section.appendChild(note);
+
           container.appendChild(section);
           continue;
         }
 
         if (step.type === "deleteA") {
-          const title = document.createElement("h2");
-          title.textContent = "Removed from Updated File (was in Original): page " + (step.aIndex + 1);
+          title.textContent = `Removed from ${fileBName} (exists in ${fileAName}): Page ${step.aIndex + 1}`;
           title.style.color = "#8a5a00";
           section.appendChild(title);
 
-          const note = document.createElement("p");
+          const note = document.createElement("div");
           note.textContent = "This page exists only in the original PDF.";
           note.style.color = "#666";
           section.appendChild(note);
+
           container.appendChild(section);
           continue;
         }
 
-        // Match case: add title and canvas
-        const title = document.createElement("h2");
         const similarityPct = Math.max(0, 100 - step.cost * 100).toFixed(2);
-        title.textContent =
-          "Original " + (step.aIndex + 1) + " ↔ Updated " + (step.bIndex + 1) +
-          " | Similarity: " + similarityPct + "%";
+        const aLabel = `${fileAName} Page ${step.aIndex + 1}`;
+        const bLabel = `${fileBName} Page ${step.bIndex + 1}`;
+
+        title.textContent = `${aLabel} ↔ ${bLabel} | Similarity: ${similarityPct}%`;
         section.appendChild(title);
 
         const out = diffOnlyCanvas(pagesA[step.aIndex], pagesB[step.bIndex], pixelOpts);
+
+        const info = document.createElement("div");
+        info.textContent = `Diff size: ${out.width}×${out.height}`;
+        info.style.color = "#666";
+        info.style.margin = "0 0 8px 0";
+        section.appendChild(info);
+
         const img = document.createElement("img");
-        img.src = out.diffCanvas.toDataURL("image/png");
+        img.src = out.diffCanvas.toDataURL(mime, exportQuality);
         img.style.width = "100%";
-        img.style.maxWidth = "800px";
+        img.style.maxWidth = "900px";
         img.style.border = "1px solid #ccc";
+        img.style.display = "block";
         section.appendChild(img);
 
         container.appendChild(section);
       }
 
-      // Use html2pdf to generate PDF
-      const element = container;
       const opt = {
         margin: 10,
         filename: "pdf-comparison.pdf",
-        image: { type: "png", quality: 0.98 },
-        html2canvas: { scale: 2 },
-        jsPDF: { orientation: "portrait", unit: "mm", format: "a4" }
+        image: { type: exportImageType, quality: exportQuality },
+        html2canvas: { scale: exportScale },
+        jsPDF: { orientation: "portrait", unit: "mm", format: "a4", compress: true },
+        pagebreak: { mode: ["css", "legacy"] } // page-break behavior + legacy class support. [web:208]
       };
 
-      log("Rendering to PDF (this may take a moment)…");
-      await html2pdf().set(opt).from(element).save();
+      log("Rendering to PDF…");
+      await html2pdf().set(opt).from(container).save(); // html2pdf API. [web:208]
 
       log("PDF downloaded successfully!");
       if (dlBtn) dlBtn.disabled = false;

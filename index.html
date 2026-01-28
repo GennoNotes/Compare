@@ -112,11 +112,12 @@
   <div id="statusBox" class="info">Ready.</div>
 
   <div class="controls">
+    <!-- Too complicated for normal people
     <label for="renderScale">Render Scale</label>
     <input type="range" id="renderScale" min="1.0" max="3.0" step="0.25" value="2.0"
       title="Controls render resolution of generated results. Higher = Sharper images at the cost of computation speed."/>
     <div class="value" id="renderScaleVal">2.0</div>
-
+    -->
     <label for="threshold">Pixel Threshold</label>
     <input type="range" id="threshold" min="0.00" max="0.30" step="0.01" value="0.10"
       title="Pixel difference sensitivity. Lower = detect more differences, higher = detects fewer differences."/>
@@ -136,12 +137,14 @@
     <input type="checkbox" id="scanned"
       title="Enable if the PDF is a scan (no real text). This disables text-based page matching and uses images only."/>
     <div class="value"></div>
-
+    
+    <!-- I don't think this actuall works
     <label for="includeAA">Include Anti-Aliasing</label>
     <input type="checkbox" id="includeAA"
       title="Include edge-smoothing pixels in the pixel difference calculation (can increase sensitivity to tiny edge changes)."/>
     <div class="value"></div>
-
+    -->
+    
     <label for="largeReport">Large Report Mode</label>
     <input type="checkbox" id="largeReport"
       title="Recommended for very large document comparisons or when using the Safari browser."/>

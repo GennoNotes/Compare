@@ -2,6 +2,13 @@
   const NL = "\n";
   const $ = (id) => document.getElementById(id);
 
+  function setStatus(msg, level = "info") {
+    const box = $("statusBox");
+    if (!box) return;
+    box.className = level;
+    box.textContent = msg;
+  }
+
   function log(msg) {
     console.log(msg);
     const el = $("log");
@@ -19,9 +26,8 @@
   }
 
   function getJsPDFConstructor() {
-    // UMD build: window.jspdf.jsPDF (from jspdf.umd.min.js). [web:245]
+    // UMD build exposes window.jspdf.jsPDF. [web:245]
     if (window.jspdf && window.jspdf.jsPDF) return window.jspdf.jsPDF;
-    // Some builds expose window.jsPDF directly
     if (window.jsPDF) return window.jsPDF;
     return null;
   }
@@ -262,36 +268,6 @@
     return { steps };
   }
 
-  function makeTitle(text, warn) {
-    const t = document.createElement("div");
-    t.textContent = text;
-    t.style.fontWeight = "bold";
-    t.style.margin = "8px 0";
-    if (warn) t.style.color = "#8a5a00";
-    return t;
-  }
-
-  function makeMeta(text) {
-    const d = document.createElement("div");
-    d.textContent = text;
-    d.style.fontSize = "0.9em";
-    d.style.color = "#666";
-    d.style.margin = "4px 0 8px";
-    return d;
-  }
-
-  function placeholderCanvas(text) {
-    const c = document.createElement("canvas");
-    c.width = 700; c.height = 80;
-    const ctx = c.getContext("2d");
-    ctx.fillStyle = "#fff";
-    ctx.fillRect(0, 0, c.width, c.height);
-    ctx.fillStyle = "#999";
-    ctx.font = "16px Arial";
-    ctx.fillText(text, 12, 45);
-    return c;
-  }
-
   function diffOnlyCanvas(aPage, bPage, pixelOpts) {
     const { a, b, width, height } = cropToCommonSize(aPage, bPage);
     const aImg = a.getContext("2d").getImageData(0, 0, width, height);
@@ -314,9 +290,10 @@
 
   async function runCompare(fileA, fileB) {
     assertLibraries();
+    setStatus("Loading PDFs…", "info");
 
     const results = mustGet("results");
-    results.innerHTML = "Loading PDFs…";
+    results.innerHTML = "";
 
     const renderScale = parseFloat(mustGet("renderScale").value);
     const threshold = parseFloat(mustGet("threshold").value);
@@ -329,21 +306,20 @@
 
     let textsA = [], textsB = [];
     if (!scanned) {
-      results.innerHTML = "Extracting text…";
+      setStatus("Extracting text…", "info");
       [textsA, textsB] = await Promise.all([extractPdfPageTexts(pdfA), extractPdfPageTexts(pdfB)]);
     } else {
       textsA = Array.from({ length: pdfA.numPages }, () => "");
       textsB = Array.from({ length: pdfB.numPages }, () => "");
     }
 
-    results.innerHTML = "Rendering pages…";
+    setStatus("Rendering pages…", "info");
     const [pagesA, pagesB] = await Promise.all([
       renderPdfToCanvases(pdfA, renderScale),
       renderPdfToCanvases(pdfB, renderScale)
     ]);
 
-    results.innerHTML = "";
-
+    setStatus("Matching pages…", "info");
     const aligned = await buildAlignmentDP(pagesA, pagesB, textsA, textsB, {
       threshold,
       includeAA,
@@ -362,6 +338,8 @@
       fileBName: fileB.name
     };
 
+    // Render results
+    results.innerHTML = "";
     for (const step of aligned.steps) {
       const block = document.createElement("div");
       block.className = "block";
@@ -369,7 +347,6 @@
       if (step.type === "insertB") {
         block.appendChild(makeTitle(`Inserted page in ${fileB.name}: Page ${step.bIndex + 1}`, true));
         block.appendChild(makeMeta("This page exists only in the updated PDF."));
-        block.appendChild(placeholderCanvas("Inserted page (no diff computed)."));
         results.appendChild(block);
         continue;
       }
@@ -377,7 +354,6 @@
       if (step.type === "deleteA") {
         block.appendChild(makeTitle(`Removed from ${fileB.name} (exists in ${fileA.name}): Page ${step.aIndex + 1}`, true));
         block.appendChild(makeMeta("This page exists only in the original PDF."));
-        block.appendChild(placeholderCanvas("Removed page (no diff computed)."));
         results.appendChild(block);
         continue;
       }
@@ -393,8 +369,26 @@
       results.appendChild(block);
     }
 
-    const dlBtn = $("downloadPdfBtn");
-    if (dlBtn) dlBtn.disabled = false;
+    $("downloadPdfBtn").disabled = false;
+    setStatus(`Done. Compared ${fileA.name} vs ${fileB.name}.`, "info");
+  }
+
+  function makeTitle(text, warn) {
+    const t = document.createElement("div");
+    t.textContent = text;
+    t.style.fontWeight = "bold";
+    t.style.margin = "8px 0";
+    if (warn) t.style.color = "#8a5a00";
+    return t;
+  }
+
+  function makeMeta(text) {
+    const d = document.createElement("div");
+    d.textContent = text;
+    d.style.fontSize = "0.9em";
+    d.style.color = "#666";
+    d.style.margin = "4px 0 8px";
+    return d;
   }
 
   window.compare = async function compare() {
@@ -403,29 +397,30 @@
       const fileB = $("pdfB")?.files?.[0] || null;
 
       if (!fileA || !fileB) {
-        alert("Please choose both PDF files first.");
+        setStatus("Please select both PDFs (Original File and Updated File) before comparing.", "warn");
         return;
       }
 
+      $("downloadPdfBtn").disabled = true;
       if ($("log")) $("log").textContent = "";
+
       await runCompare(fileA, fileB);
-      log("Done.");
     } catch (err) {
       console.error(err);
       log("Error: " + (err && err.message ? err.message : String(err)));
-      alert("An error occurred. Open DevTools → Console for details.");
+      setStatus("Error: " + (err && err.message ? err.message : String(err)), "error");
     }
   };
 
   window.downloadComparison = async function downloadComparison() {
     try {
       if (!lastResults) {
-        alert("No comparison results available. Run Compute first.");
+        setStatus("No comparison results available. Run Compare first.", "warn");
         return;
       }
 
       const dlBtn = $("downloadPdfBtn");
-      if (dlBtn) dlBtn.disabled = true;
+      dlBtn.disabled = true;
 
       const JsPDF = getJsPDFConstructor();
       const { steps, pagesA, pagesB, pixelOpts, fileAName, fileBName } = lastResults;
@@ -435,9 +430,12 @@
       const exportQuality = largeReport ? 0.80 : 0.98;
       const mime = exportImageType === "jpeg" ? "image/jpeg" : "image/png";
 
-      const pdf = new JsPDF({ orientation: "portrait", unit: "mm", format: "a4", compress: true });
+      setStatus("Building PDF…", "info");
 
-      // Cover page
+      const pdf = new JsPDF({ orientation: "portrait", unit: "mm", format: "a4", compress: true });
+      const pageW = pdf.internal.pageSize.getWidth();
+      const pageH = pdf.internal.pageSize.getHeight();
+
       pdf.setFontSize(18);
       pdf.text("PDF Comparison Report", 15, 20);
       pdf.setFontSize(11);
@@ -445,10 +443,6 @@
       pdf.setFontSize(9);
       pdf.text(`Generated: ${new Date().toLocaleString()}`, 15, 38);
 
-      const pageW = pdf.internal.pageSize.getWidth();
-      const pageH = pdf.internal.pageSize.getHeight();
-
-      // Each step gets its own page (after cover)
       for (const step of steps) {
         pdf.addPage();
         let y = 16;
@@ -503,15 +497,17 @@
       }
 
       pdf.save("pdf-comparison.pdf");
-      if (dlBtn) dlBtn.disabled = false;
+      setStatus("PDF downloaded.", "info");
+      dlBtn.disabled = false;
     } catch (err) {
       console.error(err);
-      log("Error downloading PDF: " + (err && err.message ? err.message : String(err)));
-      alert("Failed to download PDF. Check console.");
+      setStatus("PDF export failed: " + (err && err.message ? err.message : String(err)), "error");
       const dlBtn = $("downloadPdfBtn");
       if (dlBtn) dlBtn.disabled = false;
     }
   };
 
+  // Startup breadcrumb (helps diagnose “nothing happens”). [web:269]
+  setStatus("Ready. Select two PDFs, then click Compare.", "info");
   log("script.js loaded; window.compare and window.downloadComparison are ready.");
 })();

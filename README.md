@@ -1,2 +1,2 @@
 # GennoCompare
-Compare Anything!
+Compare PDFs!

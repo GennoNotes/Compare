@@ -4,6 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>PDF Difference Analyzer</title>
+
   <style>
     body { font-family: Arial, sans-serif; padding: 20px; }
     canvas { margin: 10px 0; border: 1px solid #ccc; max-width: 100%; height: auto; display: block; }
@@ -51,15 +52,21 @@
       cursor: pointer;
       font-size: 0.95em;
     }
-    .action-buttons button:hover {
-      background: #1976D2;
+    .action-buttons button:hover { background: #1976D2; }
+    .action-buttons button:disabled { background: #ccc; cursor: not-allowed; }
+
+    /* PDF export: encourage 1 "report section" per PDF page (used by downloadComparison). [web:208] */
+    .pdf-report-section {
+      break-after: page;
+      page-break-after: always;
     }
-    .action-buttons button:disabled {
-      background: #ccc;
-      cursor: not-allowed;
+    .pdf-report-section:last-child {
+      break-after: auto;
+      page-break-after: auto;
     }
   </style>
 </head>
+
 <body>
   <h2>Compare PDFs</h2>
 
@@ -107,6 +114,11 @@
     <input type="checkbox" id="includeAA"
       title="Include edge-smoothing pixels in the diff calculation (can increase sensitivity to tiny edge changes)."/>
     <div class="value"></div>
+
+    <label for="largeReport">Large report mode</label>
+    <input type="checkbox" id="largeReport"
+      title="Use smaller images for PDF export (faster + less memory). Recommended for very large comparisons or Safari."/>
+    <div class="value"></div>
   </div>
 
   <div class="action-buttons">
@@ -131,7 +143,7 @@
     window.pixelmatch = pixelmatchImport;
   </script>
 
-  <!-- jsPDF + html2canvas for PDF download -->
+  <!-- html2pdf bundle (html2canvas + jsPDF) -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
 
   <script src="script.js"></script>

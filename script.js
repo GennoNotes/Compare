@@ -151,17 +151,18 @@
     return 1 - sim;
   }
 
-  function combinedCost(aIdx, bIdx, aSmall, bSmall, aText, bText, threshold, includeAA, scanned) {
-    const pCost = pagePixelCost(aSmall[aIdx], bSmall[bIdx], threshold, includeAA);
-    if (scanned) return pCost;
+function combinedCost(aIdx, bIdx, aSmall, bSmall, aText, bText, threshold, includeAA, scanned) {
+  const pCost = pagePixelCost(aSmall[aIdx], bSmall[bIdx], threshold, includeAA);
+  if (scanned) return pCost;
 
-    const tCost = jaccardCost(aText[aIdx], aText[bIdx]);
-    const aHasText = normalizeText(aText[aIdx]).length > 20;
-    const bHasText = normalizeText(aText[bIdx]).length > 20;
+  const tCost = jaccardCost(aText[aIdx], bText[bIdx]); // FIXED
+  const aHasText = normalizeText(aText[aIdx]).length > 20;
+  const bHasText = normalizeText(bText[bIdx]).length > 20;
 
-    const wText = (aHasText && bHasText) ? 0.75 : 0.25;
-    return wText * tCost + (1 - wText) * pCost;
-  }
+  const wText = (aHasText && bHasText) ? 0.75 : 0.25;
+  return wText * tCost + (1 - wText) * pCost;
+}
+
 
   function alignmentParamsFromMatchWindow(matchWindow) {
     const mw = Math.max(0, Math.min(5, matchWindow));

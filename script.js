@@ -54,7 +54,6 @@
     for (let p = 1; p <= pdf.numPages; p++) {
       const page = await pdf.getPage(p);
       const tc = await page.getTextContent();
-      // Join items[].str into a page string. [web:16][web:17]
       const pageText = tc.items.map((it) => (it && it.str ? it.str : "")).join(" ");
       texts.push(pageText);
     }
@@ -154,7 +153,7 @@
     const mw = Math.max(0, Math.min(5, matchWindow));
     const maxConsecutiveGaps = mw;
 
-    const gapPenalty = mw === 0 ? 999 : (0.22 - mw * 0.032); // 5 => 0.06
+    const gapPenalty = mw === 0 ? 999 : (0.22 - mw * 0.032);
     const badMatchCutoff = 0.55 - mw * 0.05;
     const badMatchPenalty = mw * 0.04;
 
@@ -183,7 +182,7 @@
     }
 
     const dp = Array.from({ length: n + 1 }, () => new Float32Array(m + 1).fill(Infinity));
-    const back = Array.from({ length: n + 1 }, () => new Int8Array(m + 1)); // 0 diag, 1 up, 2 left
+    const back = Array.from({ length: n + 1 }, () => new Int8Array(m + 1));
     const gapA = Array.from({ length: n + 1 }, () => new Int16Array(m + 1));
     const gapB = Array.from({ length: n + 1 }, () => new Int16Array(m + 1));
 
@@ -297,12 +296,14 @@
     const ctx = diffCanvas.getContext("2d");
     const diffImage = ctx.createImageData(width, height);
 
-    // pixelmatch supports alpha/includeAA/threshold/diffColor options. [web:51]
     const diffCount = window.pixelmatch(aImg.data, bImg.data, diffImage.data, width, height, pixelOpts);
     ctx.putImageData(diffImage, 0, 0);
 
     return { diffCanvas, diffCount, width, height };
   }
+
+  // Store results for PDF download
+  let lastResults = null;
 
   async function runCompare(fileA, fileB) {
     assertLibraries();
@@ -349,6 +350,21 @@
 
     log("Alignment params: " + JSON.stringify(aligned.params));
 
+    const pixelOpts = {
+      threshold,
+      includeAA,
+      alpha,
+      diffColor: [255, 0, 0]
+    };
+
+    // Store for download
+    lastResults = {
+      steps: aligned.steps,
+      pagesA,
+      pagesB,
+      pixelOpts
+    };
+
     for (const step of aligned.steps) {
       const block = document.createElement("div");
       block.className = "block";
@@ -369,13 +385,6 @@
         continue;
       }
 
-      const pixelOpts = {
-        threshold,
-        includeAA,
-        alpha,
-        diffColor: [255, 0, 0]
-      };
-
       const out = diffOnlyCanvas(pagesA[step.aIndex], pagesB[step.bIndex], pixelOpts);
       const similarityPct = Math.max(0, 100 - step.cost * 100).toFixed(2);
 
@@ -389,6 +398,13 @@
       block.appendChild(makeMeta("Diff size: " + out.width + "×" + out.height));
       block.appendChild(out.diffCanvas);
       results.appendChild(block);
+    }
+
+    // Enable download button
+    const dlBtn = $("downloadPdfBtn");
+    if (dlBtn) {
+      dlBtn.disabled = false;
+      dlBtn.title = "Click to download the comparison as a PDF";
     }
   }
 
@@ -412,5 +428,114 @@
     }
   };
 
-  log("script.js loaded; window.compare is ready.");
+  window.downloadComparison = async function downloadComparison() {
+    try {
+      if (!lastResults) {
+        alert("No comparison results available. Run Compute first.");
+        return;
+      }
+
+      const dlBtn = $("downloadPdfBtn");
+      if (dlBtn) dlBtn.disabled = true;
+
+      log("Building PDF…");
+
+      const { steps, pagesA, pagesB, pixelOpts } = lastResults;
+
+      // Create a temporary container for html2pdf to capture
+      const container = document.createElement("div");
+      container.style.padding = "20px";
+      container.style.backgroundColor = "white";
+
+      // Add title
+      const title = document.createElement("h1");
+      title.textContent = "PDF Comparison Report";
+      container.appendChild(title);
+
+      const timestamp = new Date().toLocaleString();
+      const meta = document.createElement("p");
+      meta.textContent = "Generated on: " + timestamp;
+      meta.style.color = "#666";
+      meta.style.marginBottom = "20px";
+      container.appendChild(meta);
+
+      // Add each diff result
+      for (const step of steps) {
+        const section = document.createElement("div");
+        section.style.marginBottom = "30px";
+        section.style.paddingBottom = "20px";
+        section.style.borderBottom = "1px solid #ddd";
+
+        if (step.type === "insertB") {
+          const title = document.createElement("h2");
+          title.textContent = "Inserted page in Updated File: page " + (step.bIndex + 1);
+          title.style.color = "#8a5a00";
+          section.appendChild(title);
+
+          const note = document.createElement("p");
+          note.textContent = "This page exists only in the updated PDF.";
+          note.style.color = "#666";
+          section.appendChild(note);
+          container.appendChild(section);
+          continue;
+        }
+
+        if (step.type === "deleteA") {
+          const title = document.createElement("h2");
+          title.textContent = "Removed from Updated File (was in Original): page " + (step.aIndex + 1);
+          title.style.color = "#8a5a00";
+          section.appendChild(title);
+
+          const note = document.createElement("p");
+          note.textContent = "This page exists only in the original PDF.";
+          note.style.color = "#666";
+          section.appendChild(note);
+          container.appendChild(section);
+          continue;
+        }
+
+        // Match case: add title and canvas
+        const title = document.createElement("h2");
+        const similarityPct = Math.max(0, 100 - step.cost * 100).toFixed(2);
+        title.textContent =
+          "Original " + (step.aIndex + 1) + " ↔ Updated " + (step.bIndex + 1) +
+          " | Similarity: " + similarityPct + "%";
+        section.appendChild(title);
+
+        const out = diffOnlyCanvas(pagesA[step.aIndex], pagesB[step.bIndex], pixelOpts);
+        const img = document.createElement("img");
+        img.src = out.diffCanvas.toDataURL("image/png");
+        img.style.width = "100%";
+        img.style.maxWidth = "800px";
+        img.style.border = "1px solid #ccc";
+        section.appendChild(img);
+
+        container.appendChild(section);
+      }
+
+      // Use html2pdf to generate PDF
+      const element = container;
+      const opt = {
+        margin: 10,
+        filename: "pdf-comparison.pdf",
+        image: { type: "png", quality: 0.98 },
+        html2canvas: { scale: 2 },
+        jsPDF: { orientation: "portrait", unit: "mm", format: "a4" }
+      };
+
+      log("Rendering to PDF (this may take a moment)…");
+      await html2pdf().set(opt).from(element).save();
+
+      log("PDF downloaded successfully!");
+      if (dlBtn) dlBtn.disabled = false;
+    } catch (err) {
+      console.error(err);
+      log("Error downloading PDF: " + (err && err.message ? err.message : String(err)));
+      alert("Failed to download PDF. Check console.");
+      const dlBtn = $("downloadPdfBtn");
+      if (dlBtn) dlBtn.disabled = false;
+    }
+  };
+
+  log("script.js loaded; window.compare and window.downloadComparison are ready.");
 })();

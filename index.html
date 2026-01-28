@@ -36,6 +36,28 @@
     .controls label { font-size: 0.95em; }
     .controls input[type="range"] { width: 100%; }
     .controls .value { color: #666; font-size: 0.9em; text-align: right; }
+
+    .action-buttons {
+      display: flex;
+      gap: 12px;
+      margin: 16px 0;
+    }
+    .action-buttons button {
+      padding: 8px 16px;
+      background: #2196F3;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 0.95em;
+    }
+    .action-buttons button:hover {
+      background: #1976D2;
+    }
+    .action-buttons button:disabled {
+      background: #ccc;
+      cursor: not-allowed;
+    }
   </style>
 </head>
 <body>
@@ -87,6 +109,10 @@
     <div class="value"></div>
   </div>
 
+  <div class="action-buttons">
+    <button id="downloadPdfBtn" disabled title="Run comparison first to enable download">Download Comparison PDF</button>
+  </div>
+
   <h3>All highlighted objects are detected differences.</h3>
   <div id="results"></div>
   <div id="log"></div>
@@ -104,6 +130,9 @@
     import pixelmatchImport from "https://esm.run/pixelmatch@5.3.0";
     window.pixelmatch = pixelmatchImport;
   </script>
+
+  <!-- jsPDF + html2canvas for PDF download -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
 
   <script src="script.js"></script>
 
@@ -123,6 +152,11 @@
       document.getElementById("compareBtn").addEventListener("click", () => {
         if (typeof window.compare === "function") window.compare();
         else alert("compare() is not available. Check that script.js loaded.");
+      });
+
+      document.getElementById("downloadPdfBtn").addEventListener("click", () => {
+        if (typeof window.downloadComparison === "function") window.downloadComparison();
+        else alert("downloadComparison() is not available.");
       });
     });
   </script>

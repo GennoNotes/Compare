@@ -156,8 +156,8 @@
       Generate Report
     </button>
   </div>
-
-  <h3>All highlighted objects are detected differences.</h3>
+  
+  <!--<h3>All highlighted objects are detected differences.</h3>-->
   <div id="results"></div>
   <div id="log"></div>
 
@@ -206,7 +206,7 @@
       function showNeedFilesIfMissing() {
         if (!fileSelected()) {
           statusBox.className = "warn";
-          statusBox.textContent = "Please select both PDFs (Original File and Updated File) before comparing.";
+          statusBox.textContent = "Select two files to compare.";
           downloadBtn.disabled = true;
         } else {
           statusBox.className = "info";

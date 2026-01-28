@@ -345,7 +345,7 @@
       block.className = "block";
 
       if (step.type === "insertB") {
-        block.appendChild(makeTitle(`Inserted Page: ${fileB.name}: (Page ${step.bIndex + 1})`));
+        block.appendChild(makeTitle(`Inserted Page: ${fileB.name} (Page ${step.bIndex + 1})`));
         block.appendChild(makeMeta(`This page exists only in ${fileB.name}.`));
         results.appendChild(block);
         continue;

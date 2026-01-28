@@ -417,10 +417,121 @@
     }
   };
 
-  window.downloadComparison = async function downloadComparison() {
-    // unchanged (it doesn't reference renderScale/includeAA UI directly)
-    // keep your existing implementation here
-  };
+window.downloadComparison = async function downloadComparison() {
+  try {
+    if (!lastResults) {
+      setStatus("No comparison results available. Run Start first.", "warn");
+      return;
+    }
+
+    const dlBtn = $("downloadPdfBtn");
+    if (dlBtn) dlBtn.disabled = true;
+
+    const JsPDF = getJsPDFConstructor();
+    if (!JsPDF) throw new Error("jsPDF missing.");
+
+    const { steps, pagesA, pagesB, pixelOpts, fileAName, fileBName } = lastResults;
+    const largeReport = $("largeReport") ? $("largeReport").checked : false;
+
+    const exportImageType = largeReport ? "jpeg" : "png";
+    const exportQuality = largeReport ? 0.80 : 0.98;
+    const mime = exportImageType === "jpeg" ? "image/jpeg" : "image/png";
+
+    setStatus("Building PDF report…", "info");
+
+    const pdf = new JsPDF({ orientation: "portrait", unit: "mm", format: "a4", compress: true });
+    const pageW = pdf.internal.pageSize.getWidth();
+    const pageH = pdf.internal.pageSize.getHeight();
+
+    // Title page
+    pdf.setTextColor(0, 0, 0);
+    pdf.setFontSize(22);
+    pdf.text("Comparison Report", 15, 28);
+    pdf.setFontSize(12);
+    pdf.text(fileAName, 15, 40);
+    pdf.text("vs.", 15, 47);
+    pdf.text(fileBName, 15, 54);
+    pdf.setFontSize(10);
+    pdf.text(`Generated: ${new Date().toLocaleString()}`, 15, 66);
+
+    for (const step of steps) {
+      pdf.addPage();
+
+      let y = 12;
+      pdf.setTextColor(0, 0, 0);
+      pdf.setFontSize(12);
+
+      if (step.type === "insertB") {
+        pdf.setFontSize(14);
+        pdf.text(`Inserted page in ${fileBName}`, 15, y);
+        pdf.setFontSize(12);
+        pdf.text(`Page ${step.bIndex + 1}`, 15, y + 8);
+        pdf.text(`This page only exists in ${fileBName}`, 15, y + 18);
+        continue;
+      }
+
+      if (step.type === "deleteA") {
+        pdf.setFontSize(14);
+        pdf.text(`Removed from ${fileBName}`, 15, y);
+        pdf.setFontSize(12);
+        pdf.text(`Page ${step.aIndex + 1} (exists in original)`, 15, y + 8);
+        pdf.text(`This page exists only in ${fileAName}`, 15, y + 18);
+        continue;
+      }
+
+      // Match page -> render diff canvas and embed as image
+      const out = diffOnlyCanvas(pagesA[step.aIndex], pagesB[step.bIndex], pixelOpts);
+      const similarityPct = Math.max(0, 100 - step.cost * 100).toFixed(2);
+      const aLabel = `${fileAName} (Page ${step.aIndex + 1})`;
+      const bLabel = `${fileBName} (Page ${step.bIndex + 1})`;
+
+      if (out.diffCount === 0) {
+        pdf.setFontSize(12);
+        pdf.text(`No changes: ${aLabel} <--> ${bLabel}`, 15, y);
+        pdf.text("Pages are identical.", 15, y + 8);
+        continue;
+      }
+
+      // Wrap heading so it doesn't clip
+      pdf.setFontSize(12);
+      const heading = `${aLabel} <--> ${bLabel}`;
+      const headingLines = pdf.splitTextToSize(heading, pageW - 30); // jsPDF helper [web:288]
+      pdf.text(headingLines, 15, y);
+      y += headingLines.length * 6;
+
+      pdf.setFontSize(11);
+      pdf.text(`Similarity = ${similarityPct}%  (Different Pixels = ${out.diffCount})`, 15, y);
+      y += 7;
+
+      const imgData = out.diffCanvas.toDataURL(mime, exportQuality);
+
+      const margin = 15;
+      const top = y + 2;
+      const maxW = pageW - margin * 2;
+      const maxH = pageH - top - 12;
+
+      let imgW = maxW;
+      let imgH = (out.diffCanvas.height / out.diffCanvas.width) * imgW;
+
+      if (imgH > maxH) {
+        imgH = maxH;
+        imgW = (out.diffCanvas.width / out.diffCanvas.height) * imgH;
+      }
+
+      pdf.addImage(imgData, exportImageType.toUpperCase(), margin, top, imgW, imgH);
+    }
+
+    pdf.save("pdf-comparison.pdf");
+
+    setStatus("PDF downloaded.", "info");
+    if (dlBtn) dlBtn.disabled = false;
+  } catch (err) {
+    console.error(err);
+    setStatus("PDF export failed: " + (err?.message || String(err)), "error");
+    const dlBtn = $("downloadPdfBtn");
+    if (dlBtn) dlBtn.disabled = false;
+  }
+};
 
   setStatus("Ready. Select two PDFs, then click Compare.", "info");
 })();

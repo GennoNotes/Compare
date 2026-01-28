@@ -3,61 +3,96 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>PDF Difference Analyzer</title>
+  <title>Compare</title>
 
   <style>
     body { font-family: Arial, sans-serif; padding: 20px; }
+
+    .topNav {
+      display: flex;
+      gap: 10px;
+      margin-bottom: 14px;
+      flex-wrap: wrap;
+    }
+    .topNav a {
+      display: inline-block;
+      padding: 8px 12px;
+      background: #333;
+      color: #fff;
+      text-decoration: none;
+      border-radius: 4px;
+      font-size: 0.95em;
+    }
+    .topNav a:hover { background: #111; }
+    .topNav a.active { background: #2196F3; }
+
     canvas { margin: 10px 0; border: 1px solid #ccc; max-width: 100%; height: auto; display: block; }
     #results > .block { margin-bottom: 24px; }
-    #log { color: #666; font-size: 0.9em; white-space: pre-wrap; margin-top: 12px; }
-    button { padding: 6px 12px; }
+
+    button { padding: 8px 14px; border-radius: 4px; border: 0; cursor: pointer; }
+    button.primary { background: #2196F3; color: #fff; }
+    button.primary:hover { background: #1976D2; }
+    button:disabled { background: #ccc !important; cursor: not-allowed; color: #444; }
 
     .fileRow {
       display: flex;
       gap: 18px;
       flex-wrap: wrap;
       align-items: flex-end;
-      margin-bottom: 12px;
+      margin-bottom: 10px;
     }
     .fileCol { display: flex; flex-direction: column; gap: 6px; }
     .fileCol label { font-size: 0.95em; color: #333; }
 
     .controls {
-      margin: 18px 0;
+      margin: 14px 0 10px;
       padding: 12px;
       border: 1px solid #ddd;
       border-radius: 6px;
       background: #fafafa;
       display: grid;
-      grid-template-columns: 180px 1fr 80px;
+      grid-template-columns: 180px 1fr 90px;
       gap: 10px 12px;
       align-items: center;
-      max-width: 820px;
+      max-width: 880px;
     }
     .controls label { font-size: 0.95em; }
     .controls input[type="range"] { width: 100%; }
     .controls .value { color: #666; font-size: 0.9em; text-align: right; }
 
-    .action-buttons {
+    .actions {
       display: flex;
       gap: 12px;
-      margin: 16px 0;
+      margin: 10px 0 18px;
+      flex-wrap: wrap;
+      align-items: center;
     }
-    .action-buttons button {
-      padding: 8px 16px;
-      background: #2196F3;
-      color: white;
-      border: none;
-      border-radius: 4px;
-      cursor: pointer;
-      font-size: 0.95em;
+
+    #statusBox {
+      max-width: 880px;
+      padding: 10px 12px;
+      border-radius: 6px;
+      border: 1px solid #ddd;
+      background: #fff;
+      color: #333;
+      margin: 10px 0 18px;
+      white-space: pre-wrap;
     }
-    .action-buttons button:hover { background: #1976D2; }
-    .action-buttons button:disabled { background: #ccc; cursor: not-allowed; }
+    #statusBox.info { border-color: #cfe3ff; background: #f4f9ff; }
+    #statusBox.warn { border-color: #ffe6a6; background: #fff9e6; }
+    #statusBox.error { border-color: #ffb5b5; background: #fff3f3; }
+
+    #log { color: #666; font-size: 0.9em; white-space: pre-wrap; margin-top: 12px; }
   </style>
 </head>
 
 <body>
+  <div class="topNav">
+    <a class="active" href="https://gennonotes.github.io/Compare">Compare</a>
+    <a href="https://gennonotes.github.io/Merge">Merge</a>
+    <a href="https://gennonotes.github.io/Split">Split</a>
+  </div>
+
   <h2>Compare PDFs</h2>
 
   <div class="fileRow">
@@ -71,8 +106,10 @@
       <input type="file" id="pdfB" accept="application/pdf" />
     </div>
 
-    <button id="compareBtn">Compute!</button>
+    <button id="compareBtn" class="primary">Compare</button>
   </div>
+
+  <div id="statusBox" class="info">Ready.</div>
 
   <div class="controls">
     <label for="renderScale">Render Scale</label>
@@ -111,8 +148,10 @@
     <div class="value"></div>
   </div>
 
-  <div class="action-buttons">
-    <button id="downloadPdfBtn" disabled title="Run comparison first to enable download">Download Comparison PDF</button>
+  <div class="actions">
+    <button id="downloadPdfBtn" class="primary" disabled title="Run comparison first to enable download">
+      Download Comparison PDF
+    </button>
   </div>
 
   <h3>All highlighted objects are detected differences.</h3>
@@ -133,8 +172,8 @@
     window.pixelmatch = pixelmatchImport;
   </script>
 
-  <!-- jsPDF UMD (exposes window.jspdf.jsPDF) -->
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script> <!-- [web:245] -->
+  <!-- jsPDF UMD -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 
   <script src="script.js"></script>
 
@@ -148,13 +187,55 @@
       update();
     }
 
+    function fileSelected() {
+      const a = document.getElementById("pdfA")?.files?.length || 0;
+      const b = document.getElementById("pdfB")?.files?.length || 0;
+      return a > 0 && b > 0;
+    }
+
     document.addEventListener("DOMContentLoaded", () => {
       ["renderScale", "threshold", "alpha", "matchWindow"].forEach(bindRange);
 
-      document.getElementById("compareBtn").addEventListener("click", () => {
-        if (typeof window.compare === "function") window.compare();
-        else alert("compare() is not available. Check that script.js loaded.");
+      const statusBox = document.getElementById("statusBox");
+      const compareBtn = document.getElementById("compareBtn");
+      const downloadBtn = document.getElementById("downloadPdfBtn");
+
+      function showNeedFilesIfMissing() {
+        if (!fileSelected()) {
+          statusBox.className = "warn";
+          statusBox.textContent = "Please select both PDFs (Original File and Updated File) before comparing.";
+          downloadBtn.disabled = true;
+        } else {
+          statusBox.className = "info";
+          statusBox.textContent = "Ready to compare.";
+        }
+      }
+
+      document.getElementById("pdfA").addEventListener("change", showNeedFilesIfMissing); /* file input change pattern [web:190] */
+      document.getElementById("pdfB").addEventListener("change", showNeedFilesIfMissing); /* file input change pattern [web:190] */
+
+      compareBtn.addEventListener("click", async () => {
+        if (!fileSelected()) {
+          showNeedFilesIfMissing();
+          return;
+        }
+        if (typeof window.compare === "function") await window.compare();
+        else {
+          statusBox.className = "error";
+          statusBox.textContent = "compare() is not available. script.js may not have loaded.";
+        }
       });
 
-      document.getElementById("downloadPdfBtn").addEventListener("click", () => {
-        if (typeof wi
+      downloadBtn.addEventListener("click", async () => {
+        if (typeof window.downloadComparison === "function") await window.downloadComparison();
+        else {
+          statusBox.className = "error";
+          statusBox.textContent = "downloadComparison() is not available.";
+        }
+      });
+
+      showNeedFilesIfMissing();
+    });
+  </script>
+</body>
+</html>

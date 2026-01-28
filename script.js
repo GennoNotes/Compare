@@ -450,13 +450,16 @@ results.appendChild(block);
       pdf.text("PDF Comparison Report", 15, 30);
       pdf.setFontSize(14);
       pdf.text(fileAName, 15, 45);
-      pdf.text("vs", 15, 52);
+      pdf.text("vs.", 15, 52);
       pdf.text(fileBName, 15, 59);
-      pdf.setFontSize(12);
+      pdf.setFontSize(14);
       pdf.text(`Generated: ${new Date().toLocaleString()}`, 15, 75);
 
       for (const step of steps) {
         pdf.addPage();
+        pdf.setTextColor(0, 0, 0);
+        pdf.setFont("helvetica", "normal");
+
         let y = 12;
 
         if (step.type === "insertB") {

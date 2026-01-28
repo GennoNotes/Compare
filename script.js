@@ -365,13 +365,13 @@ const bLabel = `${fileB.name} (Page ${step.bIndex + 1})`;
 
 if (out.diffCount === 0) {
   // Show compact "no changes" message like inserts/deletes
-  block.appendChild(makeTitle(`No changes: ${aLabel} ↔ ${bLabel}`, false));
+  block.appendChild(makeTitle(`No changes: ${aLabel} <-> ${bLabel}`, false));
   block.appendChild(makeMeta("Pages are identical."));
   results.appendChild(block);
   continue;
 }
 
-block.appendChild(makeTitle(`${aLabel} ↔ ${bLabel}`));
+block.appendChild(makeTitle(`${aLabel} <-> ${bLabel}`));
 block.appendChild(makeMeta(`Similarity ≈ ${similarityPct}%  (Different Pixels = ${out.diffCount})`));
 block.appendChild(out.diffCanvas);
 results.appendChild(block);
@@ -467,7 +467,7 @@ results.appendChild(block);
           pdf.text(`Page ${step.bIndex + 1}`, 15, y + 8);
           pdf.setTextColor(0);
           pdf.setFontSize(10);
-          pdf.text("This page exists only in the updated PDF.", 15, y + 18);
+          pdf.text(`This page only exists in ${fileBName}`, 15, y + 18);
           continue;
         }
 
@@ -479,9 +479,12 @@ results.appendChild(block);
           pdf.text(`Page ${step.aIndex + 1} (exists in original)`, 15, y + 8);
           pdf.setTextColor(0);
           pdf.setFontSize(10);
-          pdf.text("This page exists only in the original PDF.", 15, y + 18);
+          pdf.text(`This page exists only in ${fileAName}`, 15, y + 18);
           continue;
         }
+
+//Reset text color to black
+pdf.setTextColor(0,0,0);
 
 // Build diff first (so we can check if identical)
 const out = diffOnlyCanvas(pagesA[step.aIndex], pagesB[step.bIndex], pixelOpts);
@@ -491,9 +494,9 @@ const bLabel = `${fileBName} (Page ${step.bIndex + 1})`;
 
 if (out.diffCount === 0) {
   // Show compact "no changes" like inserts/deletes
-  pdf.setTextColor(0);
+  pdf.setTextColor(0,0,0);
   pdf.setFontSize(12);
-  pdf.text(`No changes: ${aLabel} ↔ ${bLabel}`, 15, y);
+  pdf.text(`No changes: ${aLabel} <-> ${bLabel}`, 15, y);
   pdf.setFontSize(10);
   pdf.text("Pages are identical.", 15, y + 8);
   continue;
@@ -502,7 +505,7 @@ if (out.diffCount === 0) {
 // Wrapped heading so it doesn't get clipped
 pdf.setTextColor(0);
 pdf.setFontSize(13);
-const headingText = `${aLabel} ↔ ${bLabel}`;
+const headingText = `${aLabel} <-> ${bLabel}`;
 const headingLines = pdf.splitTextToSize(headingText, pageW - 30); // returns array of strings [web:288]
 pdf.text(headingLines, 15, y); // multiline supported when text is string[] [web:306]
 y += headingLines.length * 6;

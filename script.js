@@ -452,7 +452,7 @@ results.appendChild(block);
       pdf.text(fileAName, 15, 45);
       pdf.text("vs", 15, 52);
       pdf.text(fileBName, 15, 59);
-      pdf.setFontSize(10);
+      pdf.setFontSize(12);
       pdf.text(`Generated: ${new Date().toLocaleString()}`, 15, 75);
 
       for (const step of steps) {
@@ -465,8 +465,8 @@ results.appendChild(block);
           pdf.text(`Inserted page in ${fileBName}`, 15, y);
           pdf.setFontSize(12);
           pdf.text(`Page ${step.bIndex + 1}`, 15, y + 8);
-          pdf.setTextColor(0);
-          pdf.setFontSize(10);
+          pdf.setTextColor(0,0,0);
+          pdf.setFontSize(12);
           pdf.text(`This page only exists in ${fileBName}`, 15, y + 18);
           continue;
         }
@@ -477,8 +477,8 @@ results.appendChild(block);
           pdf.text(`Removed from ${fileBName}`, 15, y);
           pdf.setFontSize(12);
           pdf.text(`Page ${step.aIndex + 1} (exists in original)`, 15, y + 8);
-          pdf.setTextColor(0);
-          pdf.setFontSize(10);
+          pdf.setTextColor(0,0,0);
+          pdf.setFontSize(12);
           pdf.text(`This page exists only in ${fileAName}`, 15, y + 18);
           continue;
         }
@@ -497,21 +497,21 @@ if (out.diffCount === 0) {
   pdf.setTextColor(0,0,0);
   pdf.setFontSize(12);
   pdf.text(`No changes: ${aLabel} <-> ${bLabel}`, 15, y);
-  pdf.setFontSize(10);
+  pdf.setFontSize(12);
   pdf.text("Pages are identical.", 15, y + 8);
   continue;
 }
 
 // Wrapped heading so it doesn't get clipped
-pdf.setTextColor(0);
-pdf.setFontSize(13);
+pdf.setTextColor(0,0,0);
+pdf.setFontSize(14);
 const headingText = `${aLabel} <-> ${bLabel}`;
 const headingLines = pdf.splitTextToSize(headingText, pageW - 30); // returns array of strings [web:288]
 pdf.text(headingLines, 15, y); // multiline supported when text is string[] [web:306]
 y += headingLines.length * 6;
 
-pdf.setFontSize(11);
-pdf.text(`Similarity: ${similarityPct}%`, 15, y);
+pdf.setFontSize(12);
+pdf.text(`Similarity ≈ ${similarityPct}%  (Different Pixels = ${out.diffCount})`, 15, y);
 y += 7;
 
 const imgData = out.diffCanvas.toDataURL(mime, exportQuality);

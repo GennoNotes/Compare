@@ -365,13 +365,13 @@ const bLabel = `${fileB.name} (Page ${step.bIndex + 1})`;
 
 if (out.diffCount === 0) {
   // Show compact "no changes" message like inserts/deletes
-  block.appendChild(makeTitle(`No changes: ${aLabel} <-> ${bLabel}`, false));
+  block.appendChild(makeTitle(`No changes: ${aLabel} <--> ${bLabel}`, false));
   block.appendChild(makeMeta("Pages are identical."));
   results.appendChild(block);
   continue;
 }
 
-block.appendChild(makeTitle(`${aLabel} <-> ${bLabel}`));
+block.appendChild(makeTitle(`${aLabel} <--> ${bLabel}`));
 block.appendChild(makeMeta(`Similarity ≈ ${similarityPct}%  (Different Pixels = ${out.diffCount})`));
 block.appendChild(out.diffCanvas);
 results.appendChild(block);
@@ -496,7 +496,7 @@ if (out.diffCount === 0) {
   // Show compact "no changes" like inserts/deletes
   pdf.setTextColor(0,0,0);
   pdf.setFontSize(12);
-  pdf.text(`No changes: ${aLabel} <-> ${bLabel}`, 15, y);
+  pdf.text(`No changes: ${aLabel} <--> ${bLabel}`, 15, y);
   pdf.setFontSize(12);
   pdf.text("Pages are identical.", 15, y + 8);
   continue;
@@ -505,7 +505,7 @@ if (out.diffCount === 0) {
 // Wrapped heading so it doesn't get clipped
 pdf.setTextColor(0,0,0);
 pdf.setFontSize(14);
-const headingText = `${aLabel} <-> ${bLabel}`;
+const headingText = `${aLabel} <--> ${bLabel}`;
 const headingLines = pdf.splitTextToSize(headingText, pageW - 30); // returns array of strings [web:288]
 pdf.text(headingLines, 15, y); // multiline supported when text is string[] [web:306]
 y += headingLines.length * 6;

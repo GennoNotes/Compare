@@ -358,17 +358,24 @@
         continue;
       }
 
-      const out = diffOnlyCanvas(pagesA[step.aIndex], pagesB[step.bIndex], pixelOpts);
-      if (out.diffCount === 0) continue; // pixelmatch returns mismatched pixel count; 0 means identical [web:112]
+const out = diffOnlyCanvas(pagesA[step.aIndex], pagesB[step.bIndex], pixelOpts);
+const similarityPct = Math.max(0, 100 - step.cost * 100).toFixed(2);
+const aLabel = `${fileA.name} Page ${step.aIndex + 1}`;
+const bLabel = `${fileB.name} Page ${step.bIndex + 1}`;
 
-      const similarityPct = Math.max(0, 100 - step.cost * 100).toFixed(2);
-      const aLabel = `${fileA.name} Page ${step.aIndex + 1}`;
-      const bLabel = `${fileB.name} Page ${step.bIndex + 1}`;
+if (out.diffCount === 0) {
+  // Show compact "no changes" message like inserts/deletes
+  block.appendChild(makeTitle(`No changes: ${aLabel} ↔ ${bLabel}`, false));
+  block.appendChild(makeMeta("Pages are identical."));
+  results.appendChild(block);
+  continue;
+}
 
-      block.appendChild(makeTitle(`${aLabel} ↔ ${bLabel} | diffPixels=${out.diffCount} | similarity≈${similarityPct}%`));
-      block.appendChild(makeMeta("Diff size: " + out.width + "×" + out.height));
-      block.appendChild(out.diffCanvas);
-      results.appendChild(block);
+block.appendChild(makeTitle(`${aLabel} ↔ ${bLabel} | diffPixels=${out.diffCount} | similarity≈${similarityPct}%`));
+block.appendChild(makeMeta("Diff size: " + out.width + "×" + out.height));
+block.appendChild(out.diffCanvas);
+results.appendChild(block);
+
     }
 
     $("downloadPdfBtn").disabled = false;
@@ -476,44 +483,51 @@
           continue;
         }
 
-        // Build diff first (so we can skip identical pages safely)
-        const out = diffOnlyCanvas(pagesA[step.aIndex], pagesB[step.bIndex], pixelOpts);
-        if (out.diffCount === 0) continue; // 0 mismatched pixels => identical [web:112]
+// Build diff first (so we can check if identical)
+const out = diffOnlyCanvas(pagesA[step.aIndex], pagesB[step.bIndex], pixelOpts);
+const similarityPct = Math.max(0, 100 - step.cost * 100).toFixed(2);
+const aLabel = `${fileAName} Page ${step.aIndex + 1}`;
+const bLabel = `${fileBName} Page ${step.bIndex + 1}`;
 
-        const similarityPct = Math.max(0, 100 - step.cost * 100).toFixed(2);
-        const aLabel = `${fileAName} Page ${step.aIndex + 1}`;
-        const bLabel = `${fileBName} Page ${step.bIndex + 1}`;
+if (out.diffCount === 0) {
+  // Show compact "no changes" like inserts/deletes
+  pdf.setTextColor(0);
+  pdf.setFontSize(12);
+  pdf.text(`No changes: ${aLabel} ↔ ${bLabel}`, 15, y);
+  pdf.setFontSize(10);
+  pdf.text("Pages are identical.", 15, y + 8);
+  continue;
+}
 
-        // Wrapped heading so it doesn't get clipped
-        pdf.setTextColor(0);
-        pdf.setFontSize(13);
-        const headingText = `${aLabel} ↔ ${bLabel}`;
-        const headingLines = pdf.splitTextToSize(headingText, pageW - 30); // returns array of strings [web:288]
-        pdf.text(headingLines, 15, y); // multiline supported when text is string[] [web:306]
-        y += headingLines.length * 6;
+// Wrapped heading so it doesn't get clipped
+pdf.setTextColor(0);
+pdf.setFontSize(13);
+const headingText = `${aLabel} ↔ ${bLabel}`;
+const headingLines = pdf.splitTextToSize(headingText, pageW - 30); // returns array of strings [web:288]
+pdf.text(headingLines, 15, y); // multiline supported when text is string[] [web:306]
+y += headingLines.length * 6;
 
-        pdf.setFontSize(11);
-        pdf.text(`Similarity: ${similarityPct}%`, 15, y);
-        y += 7;
+pdf.setFontSize(11);
+pdf.text(`Similarity: ${similarityPct}%`, 15, y);
+y += 7;
 
-        const imgData = out.diffCanvas.toDataURL(mime, exportQuality);
+const imgData = out.diffCanvas.toDataURL(mime, exportQuality);
 
-        const margin = 15;
-        const top = y + 2;
-        const maxW = pageW - margin * 2;
-        const maxH = pageH - top - 12;
+const margin = 15;
+const top = y + 2;
+const maxW = pageW - margin * 2;
+const maxH = pageH - top - 12;
 
-        let imgW = maxW;
-        let imgH = (out.diffCanvas.height / out.diffCanvas.width) * imgW;
+let imgW = maxW;
+let imgH = (out.diffCanvas.height / out.diffCanvas.width) * imgW;
 
-        if (imgH > maxH) {
-          imgH = maxH;
-          imgW = (out.diffCanvas.width / out.diffCanvas.height) * imgH;
-        }
+if (imgH > maxH) {
+  imgH = maxH;
+  imgW = (out.diffCanvas.width / out.diffCanvas.height) * imgH;
+}
 
-        pdf.addImage(imgData, exportImageType.toUpperCase(), margin, top, imgW, imgH);
+pdf.addImage(imgData, exportImageType.toUpperCase(), margin, top, imgW, imgH);
       }
-
       pdf.save("pdf-comparison.pdf");
       setStatus("PDF downloaded.", "info");
       dlBtn.disabled = false;

@@ -54,16 +54,6 @@
     }
     .action-buttons button:hover { background: #1976D2; }
     .action-buttons button:disabled { background: #ccc; cursor: not-allowed; }
-
-    /* PDF export: encourage 1 "report section" per PDF page (used by downloadComparison). [web:208] */
-    .pdf-report-section {
-      break-after: page;
-      page-break-after: always;
-    }
-    .pdf-report-section:last-child {
-      break-after: auto;
-      page-break-after: auto;
-    }
   </style>
 </head>
 
@@ -143,8 +133,8 @@
     window.pixelmatch = pixelmatchImport;
   </script>
 
-  <!-- html2pdf bundle (html2canvas + jsPDF) -->
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+  <!-- jsPDF UMD (exposes window.jspdf.jsPDF) -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script> <!-- [web:245] -->
 
   <script src="script.js"></script>
 
@@ -167,10 +157,4 @@
       });
 
       document.getElementById("downloadPdfBtn").addEventListener("click", () => {
-        if (typeof window.downloadComparison === "function") window.downloadComparison();
-        else alert("downloadComparison() is not available.");
-      });
-    });
-  </script>
-</body>
-</html>
+        if (typeof wi

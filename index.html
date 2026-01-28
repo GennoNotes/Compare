@@ -113,33 +113,28 @@
 
   <div class="controls">
     <label for="threshold">Pixel Threshold</label>
-    <input type="range" id="threshold" min="0.00" max="0.30" step="0.01" value="0.10"
-      title="Pixel difference sensitivity. Lower = detect more differences, higher = detects fewer differences."/>
+    <input type="range" id="threshold" min="0.00" max="0.30" step="0.01" value="0.10" />
     <div class="value" id="thresholdVal">0.10</div>
 
     <label for="alpha">Background Fade</label>
-    <input type="range" id="alpha" min="0.00" max="0.50" step="0.01" value="0.10"
-      title="How visible unchanged content is in the generated output. 0 = white background, higher = more of the page shows."/>
+    <input type="range" id="alpha" min="0.00" max="0.50" step="0.01" value="0.10" />
     <div class="value" id="alphaVal">0.10</div>
 
     <label for="matchWindow">Extra Page Detection</label>
-    <input type="range" id="matchWindow" min="0" max="5" step="1" value="2"
-      title="How aggressively to detect inserted/removed pages. Higher = more willing to insert/skip pages while matching."/>
+    <input type="range" id="matchWindow" min="0" max="5" step="1" value="2" />
     <div class="value" id="matchWindowVal">2</div>
 
     <label for="scanned">Scanned document</label>
-    <input type="checkbox" id="scanned"
-      title="Enable if the PDF is a scan (no real text). This disables text-based page matching and uses images only."/>
+    <input type="checkbox" id="scanned" />
     <div class="value"></div>
 
     <label for="largeReport">Large Report Mode</label>
-    <input type="checkbox" id="largeReport"
-      title="Recommended for very large document comparisons or when using the Safari browser."/>
+    <input type="checkbox" id="largeReport" />
     <div class="value"></div>
   </div>
 
   <div class="actions">
-    <button id="downloadPdfBtn" class="primary" disabled title="Run comparison first to enable download">
+    <button id="downloadPdfBtn" class="primary" disabled>
       Generate Report
     </button>
   </div>
@@ -147,7 +142,6 @@
   <div id="results"></div>
   <div id="log"></div>
 
-  <!-- pdf.js pinned -->
   <script type="module">
     import * as pdfjsLib from "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.0.379/build/pdf.min.mjs";
     window.pdfjsLib = pdfjsLib;
@@ -155,13 +149,11 @@
       "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.0.379/build/pdf.worker.min.mjs";
   </script>
 
-  <!-- pixelmatch pinned -->
   <script type="module">
     import pixelmatchImport from "https://esm.run/pixelmatch@5.3.0";
     window.pixelmatch = pixelmatchImport;
   </script>
 
-  <!-- jsPDF UMD -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 
   <script src="script.js"></script>
@@ -172,7 +164,7 @@
       const out = document.getElementById(id + "Val");
       if (!el || !out) return;
       const update = () => out.textContent = el.value;
-      el.addEventListener("input", update); /* range sliders commonly use input for live updates [web:142] */
+      el.addEventListener("input", update); /* input event updates sliders live [web:142] */
       update();
     }
 

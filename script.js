@@ -372,7 +372,7 @@ if (out.diffCount === 0) {
 }
 
 block.appendChild(makeTitle(`${aLabel} <--> ${bLabel}`));
-block.appendChild(makeMeta(`Similarity ≈ ${similarityPct}%  (Different Pixels = ${out.diffCount})`));
+block.appendChild(makeMeta(`Similarity = ${similarityPct}%  (Different Pixels = ${out.diffCount})`));
 block.appendChild(out.diffCanvas);
 results.appendChild(block);
 
@@ -511,7 +511,7 @@ pdf.text(headingLines, 15, y); // multiline supported when text is string[] [web
 y += headingLines.length * 6;
 
 pdf.setFontSize(12);
-pdf.text(`Similarity ≈ ${similarityPct}%  (Different Pixels = ${out.diffCount})`, 15, y);
+pdf.text(`Similarity = ${similarityPct}%  (Different Pixels = ${out.diffCount})`, 15, y);
 y += 7;
 
 const imgData = out.diffCanvas.toDataURL(mime, exportQuality);

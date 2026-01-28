@@ -521,7 +521,7 @@ window.downloadComparison = async function downloadComparison() {
       pdf.addImage(imgData, exportImageType.toUpperCase(), margin, top, imgW, imgH);
     }
 
-    pdf.save("pdf-comparison.pdf");
+    pdf.save("GennoCompare.pdf");
 
     setStatus("PDF downloaded.", "info");
     if (dlBtn) dlBtn.disabled = false;

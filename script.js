@@ -371,8 +371,8 @@ if (out.diffCount === 0) {
   continue;
 }
 
-block.appendChild(makeTitle(`${aLabel} ↔ ${bLabel} | diffPixels=${out.diffCount} | similarity≈${similarityPct}%`));
-block.appendChild(makeMeta("Diff size: " + out.width + "×" + out.height));
+block.appendChild(makeTitle(`${aLabel} ↔ ${bLabel}`));
+block.appendChild(makeMeta(`Similarity ≈ ${similarityPct}% ${NL} Different Pixels = ${out.diffCount}`));
 block.appendChild(out.diffCanvas);
 results.appendChild(block);
 

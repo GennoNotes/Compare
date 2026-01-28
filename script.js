@@ -346,14 +346,14 @@
 
       if (step.type === "insertB") {
         block.appendChild(makeTitle(`Inserted Page: ${fileB.name} (Page ${step.bIndex + 1})`));
-        block.appendChild(makeMeta(`This page exists only in ${fileB.name}.`));
+        block.appendChild(makeMeta(`This page exists only in ${fileB.name}`));
         results.appendChild(block);
         continue;
       }
 
       if (step.type === "deleteA") {
         block.appendChild(makeTitle(`Removed from ${fileB.name} (exists in ${fileA.name}): (Page ${step.aIndex + 1})`));
-        block.appendChild(makeMeta(`This page exists only in ${fileA.name}.`));
+        block.appendChild(makeMeta(`This page exists only in ${fileA.name}`));
         results.appendChild(block);
         continue;
       }

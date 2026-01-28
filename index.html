@@ -114,17 +114,17 @@
   <div class="controls">
     <label for="renderScale">Render Scale</label>
     <input type="range" id="renderScale" min="1.0" max="3.0" step="0.25" value="2.0"
-      title="Controls render resolution. Higher is sharper but slower."/>
+      title="Controls render resolution of generated results. Higher = Sharper images at the cost of computation speed."/>
     <div class="value" id="renderScaleVal">2.0</div>
 
     <label for="threshold">Pixel Threshold</label>
     <input type="range" id="threshold" min="0.00" max="0.30" step="0.01" value="0.10"
-      title="Diff sensitivity. Lower detects more differences; higher detects fewer."/>
+      title="Pixel difference sensitivity. Lower = detect more differences, higher = detects fewer differences."/>
     <div class="value" id="thresholdVal">0.10</div>
 
     <label for="alpha">Background Fade</label>
     <input type="range" id="alpha" min="0.00" max="0.50" step="0.01" value="0.10"
-      title="How visible unchanged content is in the diff output. 0 = white background, higher = more of the page shows."/>
+      title="How visible unchanged content is in the generated output. 0 = white background, higher = more of the page shows."/>
     <div class="value" id="alphaVal">0.10</div>
 
     <label for="matchWindow">Extra Page Detection</label>
@@ -139,10 +139,10 @@
 
     <label for="includeAA">Include Anti-Aliasing</label>
     <input type="checkbox" id="includeAA"
-      title="Include edge-smoothing pixels in the diff calculation (can increase sensitivity to tiny edge changes)."/>
+      title="Include edge-smoothing pixels in the pixel difference calculation (can increase sensitivity to tiny edge changes)."/>
     <div class="value"></div>
 
-    <label for="largeReport">Large report Mode</label>
+    <label for="largeReport">Large Report Mode</label>
     <input type="checkbox" id="largeReport"
       title="Recommended for very large document comparisons or when using the Safari browser."/>
     <div class="value"></div>

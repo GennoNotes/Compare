@@ -345,14 +345,14 @@
       block.className = "block";
 
       if (step.type === "insertB") {
-        block.appendChild(makeTitle(`Inserted Page: ${fileB.name}: pg. ${step.bIndex + 1}`));
+        block.appendChild(makeTitle(`Inserted Page: ${fileB.name}: pg.${step.bIndex + 1}`));
         block.appendChild(makeMeta(`This page exists only in ${fileB.name}.`));
         results.appendChild(block);
         continue;
       }
 
       if (step.type === "deleteA") {
-        block.appendChild(makeTitle(`Removed from ${fileB.name} (exists in ${fileA.name}): pg. ${step.aIndex + 1}`));
+        block.appendChild(makeTitle(`Removed from ${fileB.name} (exists in ${fileA.name}): pg.${step.aIndex + 1}`));
         block.appendChild(makeMeta(`This page exists only in ${fileA.name}.`));
         results.appendChild(block);
         continue;
@@ -360,8 +360,8 @@
 
 const out = diffOnlyCanvas(pagesA[step.aIndex], pagesB[step.bIndex], pixelOpts);
 const similarityPct = Math.max(0, 100 - step.cost * 100).toFixed(2);
-const aLabel = `${fileA.name} pg. ${step.aIndex + 1}`;
-const bLabel = `${fileB.name} pg. ${step.bIndex + 1}`;
+const aLabel = `${fileA.name} pg.${step.aIndex + 1}`;
+const bLabel = `${fileB.name} pg.${step.bIndex + 1}`;
 
 if (out.diffCount === 0) {
   // Show compact "no changes" message like inserts/deletes
@@ -372,7 +372,7 @@ if (out.diffCount === 0) {
 }
 
 block.appendChild(makeTitle(`${aLabel} ↔ ${bLabel}`));
-block.appendChild(makeMeta(`Similarity ≈ ${similarityPct}% ${NL} Different Pixels = ${out.diffCount}`));
+block.appendChild(makeMeta(`Similarity ≈ ${similarityPct}%  (Different Pixels = ${out.diffCount})`));
 block.appendChild(out.diffCanvas);
 results.appendChild(block);
 
@@ -486,8 +486,8 @@ results.appendChild(block);
 // Build diff first (so we can check if identical)
 const out = diffOnlyCanvas(pagesA[step.aIndex], pagesB[step.bIndex], pixelOpts);
 const similarityPct = Math.max(0, 100 - step.cost * 100).toFixed(2);
-const aLabel = `${fileAName} Page ${step.aIndex + 1}`;
-const bLabel = `${fileBName} Page ${step.bIndex + 1}`;
+const aLabel = `${fileAName} pg.${step.aIndex + 1}`;
+const bLabel = `${fileBName} pg.${step.bIndex + 1}`;
 
 if (out.diffCount === 0) {
   // Show compact "no changes" like inserts/deletes

@@ -290,7 +290,7 @@
 
   async function runCompare(fileA, fileB) {
     assertLibraries();
-    setStatus("Loading PDFs…", "info");
+    setStatus("Reticulating splines...", "info");
 
     const results = mustGet("results");
     results.innerHTML = "";
@@ -379,7 +379,7 @@ results.appendChild(block);
     }
 
     $("downloadPdfBtn").disabled = false;
-    setStatus(`Done. Compared ${fileA.name} vs ${fileB.name}.`, "info");
+    setStatus(`Done. Compared ${fileA.name} to ${fileB.name}.`, "info");
   }
 
   function makeTitle(text, warn) {
@@ -406,7 +406,7 @@ results.appendChild(block);
       const fileB = $("pdfB")?.files?.[0] || null;
 
       if (!fileA || !fileB) {
-        setStatus("Please select both PDFs (Original File and Updated File) before comparing.", "warn");
+        setStatus("Please select two files before comparing.", "warn");
         return;
       }
 
@@ -545,5 +545,4 @@ pdf.addImage(imgData, exportImageType.toUpperCase(), margin, top, imgW, imgH);
   };
 
   setStatus("Ready. Select two PDFs, then click Compare.", "info");
-  log("script.js loaded; window.compare and window.downloadComparison are ready.");
 })();

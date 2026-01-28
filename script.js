@@ -447,7 +447,7 @@ results.appendChild(block);
 
       // Title page
       pdf.setFontSize(24);
-      pdf.text("PDF Comparison Report", 15, 30);
+      pdf.text("Comparison Report", 15, 30);
       pdf.setFontSize(14);
       pdf.text(fileAName, 15, 45);
       pdf.text("vs.", 15, 52);
@@ -458,12 +458,11 @@ results.appendChild(block);
       for (const step of steps) {
         pdf.addPage();
         pdf.setTextColor(0, 0, 0);
-        pdf.setFont("helvetica", "normal");
 
         let y = 12;
 
         if (step.type === "insertB") {
-          pdf.setTextColor(138, 90, 0);
+          pdf.setTextColor(0, 0, 0);
           pdf.setFontSize(14);
           pdf.text(`Inserted page in ${fileBName}`, 15, y);
           pdf.setFontSize(12);
@@ -475,7 +474,7 @@ results.appendChild(block);
         }
 
         if (step.type === "deleteA") {
-          pdf.setTextColor(138, 90, 0);
+          pdf.setTextColor(0, 0, 0);
           pdf.setFontSize(14);
           pdf.text(`Removed from ${fileBName}`, 15, y);
           pdf.setFontSize(12);

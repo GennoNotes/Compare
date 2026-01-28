@@ -151,18 +151,18 @@
     return 1 - sim;
   }
 
-function combinedCost(aIdx, bIdx, aSmall, bSmall, aText, bText, threshold, includeAA, scanned) {
-  const pCost = pagePixelCost(aSmall[aIdx], bSmall[bIdx], threshold, includeAA);
-  if (scanned) return pCost;
+  // IMPORTANT: keep this version (aText vs bText)
+  function combinedCost(aIdx, bIdx, aSmall, bSmall, aText, bText, threshold, includeAA, scanned) {
+    const pCost = pagePixelCost(aSmall[aIdx], bSmall[bIdx], threshold, includeAA);
+    if (scanned) return pCost;
 
-  const tCost = jaccardCost(aText[aIdx], bText[bIdx]); // FIXED
-  const aHasText = normalizeText(aText[aIdx]).length > 20;
-  const bHasText = normalizeText(bText[bIdx]).length > 20;
+    const tCost = jaccardCost(aText[aIdx], bText[bIdx]);
+    const aHasText = normalizeText(aText[aIdx]).length > 20;
+    const bHasText = normalizeText(bText[bIdx]).length > 20;
 
-  const wText = (aHasText && bHasText) ? 0.75 : 0.25;
-  return wText * tCost + (1 - wText) * pCost;
-}
-
+    const wText = (aHasText && bHasText) ? 0.75 : 0.25;
+    return wText * tCost + (1 - wText) * pCost;
+  }
 
   function alignmentParamsFromMatchWindow(matchWindow) {
     const mw = Math.max(0, Math.min(5, matchWindow));
@@ -338,7 +338,7 @@ function combinedCost(aIdx, bIdx, aSmall, bSmall, aText, bText, threshold, inclu
       fileBName: fileB.name
     };
 
-    // Render results
+    // Render results (skip identical pages)
     results.innerHTML = "";
     for (const step of aligned.steps) {
       const block = document.createElement("div");
@@ -352,21 +352,18 @@ function combinedCost(aIdx, bIdx, aSmall, bSmall, aText, bText, threshold, inclu
       }
 
       if (step.type === "deleteA") {
-        block.appendChild(makeTitle(`Removed from ${fileBName} (exists in ${fileA.name}): Page ${step.aIndex + 1}`, true));
+        block.appendChild(makeTitle(`Removed from ${fileB.name} (exists in ${fileA.name}): Page ${step.aIndex + 1}`, true));
         block.appendChild(makeMeta("This page exists only in the original PDF."));
         results.appendChild(block);
         continue;
       }
 
       const out = diffOnlyCanvas(pagesA[step.aIndex], pagesB[step.bIndex], pixelOpts);
+      if (out.diffCount === 0) continue; // pixelmatch returns mismatched pixel count; 0 means identical [web:112]
+
       const similarityPct = Math.max(0, 100 - step.cost * 100).toFixed(2);
       const aLabel = `${fileA.name} Page ${step.aIndex + 1}`;
       const bLabel = `${fileB.name} Page ${step.bIndex + 1}`;
-
-      // SKIP display if 100% similar
-      if (parseFloat(similarityPct) === 100) {
-        continue;
-      }
 
       block.appendChild(makeTitle(`${aLabel} ↔ ${bLabel} | diffPixels=${out.diffCount} | similarity≈${similarityPct}%`));
       block.appendChild(makeMeta("Diff size: " + out.width + "×" + out.height));
@@ -479,29 +476,30 @@ function combinedCost(aIdx, bIdx, aSmall, bSmall, aText, bText, threshold, inclu
           continue;
         }
 
+        // Build diff first (so we can skip identical pages safely)
+        const out = diffOnlyCanvas(pagesA[step.aIndex], pagesB[step.bIndex], pixelOpts);
+        if (out.diffCount === 0) continue; // 0 mismatched pixels => identical [web:112]
+
         const similarityPct = Math.max(0, 100 - step.cost * 100).toFixed(2);
-
-        // SKIP 100% identical pages in PDF too
-        if (parseFloat(similarityPct) === 100) {
-          continue;
-        }
-
         const aLabel = `${fileAName} Page ${step.aIndex + 1}`;
         const bLabel = `${fileBName} Page ${step.bIndex + 1}`;
 
+        // Wrapped heading so it doesn't get clipped
         pdf.setTextColor(0);
         pdf.setFontSize(13);
         const headingText = `${aLabel} ↔ ${bLabel}`;
-        pdf.text(headingText, 15, y);
-        
-        pdf.setFontSize(11);
-        pdf.text(`Similarity: ${similarityPct}%`, 15, y + 7);
+        const headingLines = pdf.splitTextToSize(headingText, pageW - 30); // returns array of strings [web:288]
+        pdf.text(headingLines, 15, y); // multiline supported when text is string[] [web:306]
+        y += headingLines.length * 6;
 
-        const out = diffOnlyCanvas(pagesA[step.aIndex], pagesB[step.bIndex], pixelOpts);
+        pdf.setFontSize(11);
+        pdf.text(`Similarity: ${similarityPct}%`, 15, y);
+        y += 7;
+
         const imgData = out.diffCanvas.toDataURL(mime, exportQuality);
 
         const margin = 15;
-        const top = y + 16;
+        const top = y + 2;
         const maxW = pageW - margin * 2;
         const maxH = pageH - top - 12;
 

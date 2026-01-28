@@ -26,7 +26,6 @@
   }
 
   function getJsPDFConstructor() {
-    // UMD build exposes window.jspdf.jsPDF. [web:245]
     if (window.jspdf && window.jspdf.jsPDF) return window.jspdf.jsPDF;
     if (window.jsPDF) return window.jsPDF;
     return null;
@@ -156,9 +155,9 @@
     const pCost = pagePixelCost(aSmall[aIdx], bSmall[bIdx], threshold, includeAA);
     if (scanned) return pCost;
 
-    const tCost = jaccardCost(aText[aIdx], bText[bIdx]);
+    const tCost = jaccardCost(aText[aIdx], aText[bIdx]);
     const aHasText = normalizeText(aText[aIdx]).length > 20;
-    const bHasText = normalizeText(bText[bIdx]).length > 20;
+    const bHasText = normalizeText(aText[bIdx]).length > 20;
 
     const wText = (aHasText && bHasText) ? 0.75 : 0.25;
     return wText * tCost + (1 - wText) * pCost;
@@ -352,7 +351,7 @@
       }
 
       if (step.type === "deleteA") {
-        block.appendChild(makeTitle(`Removed from ${fileB.name} (exists in ${fileA.name}): Page ${step.aIndex + 1}`, true));
+        block.appendChild(makeTitle(`Removed from ${fileBName} (exists in ${fileA.name}): Page ${step.aIndex + 1}`, true));
         block.appendChild(makeMeta("This page exists only in the original PDF."));
         results.appendChild(block);
         continue;
@@ -362,6 +361,11 @@
       const similarityPct = Math.max(0, 100 - step.cost * 100).toFixed(2);
       const aLabel = `${fileA.name} Page ${step.aIndex + 1}`;
       const bLabel = `${fileB.name} Page ${step.bIndex + 1}`;
+
+      // SKIP display if 100% similar
+      if (parseFloat(similarityPct) === 100) {
+        continue;
+      }
 
       block.appendChild(makeTitle(`${aLabel} ↔ ${bLabel} | diffPixels=${out.diffCount} | similarity≈${similarityPct}%`));
       block.appendChild(makeMeta("Diff size: " + out.width + "×" + out.height));
@@ -436,54 +440,69 @@
       const pageW = pdf.internal.pageSize.getWidth();
       const pageH = pdf.internal.pageSize.getHeight();
 
-      pdf.setFontSize(18);
-      pdf.text("PDF Comparison Report", 15, 20);
-      pdf.setFontSize(11);
-      pdf.text(`${fileAName} vs ${fileBName}`, 15, 30);
-      pdf.setFontSize(9);
-      pdf.text(`Generated: ${new Date().toLocaleString()}`, 15, 38);
+      // Title page
+      pdf.setFontSize(24);
+      pdf.text("PDF Comparison Report", 15, 30);
+      pdf.setFontSize(14);
+      pdf.text(fileAName, 15, 45);
+      pdf.text("vs", 15, 52);
+      pdf.text(fileBName, 15, 59);
+      pdf.setFontSize(10);
+      pdf.text(`Generated: ${new Date().toLocaleString()}`, 15, 75);
 
       for (const step of steps) {
         pdf.addPage();
-        let y = 16;
+        let y = 12;
 
         if (step.type === "insertB") {
           pdf.setTextColor(138, 90, 0);
-          pdf.setFontSize(13);
-          pdf.text(`Inserted page in ${fileBName}: Page ${step.bIndex + 1}`, 15, y);
+          pdf.setFontSize(14);
+          pdf.text(`Inserted page in ${fileBName}`, 15, y);
+          pdf.setFontSize(12);
+          pdf.text(`Page ${step.bIndex + 1}`, 15, y + 8);
           pdf.setTextColor(0);
           pdf.setFontSize(10);
-          pdf.text("This page exists only in the updated PDF.", 15, y + 8);
+          pdf.text("This page exists only in the updated PDF.", 15, y + 18);
           continue;
         }
 
         if (step.type === "deleteA") {
           pdf.setTextColor(138, 90, 0);
-          pdf.setFontSize(13);
-          pdf.text(`Removed from ${fileBName} (exists in ${fileAName}): Page ${step.aIndex + 1}`, 15, y);
+          pdf.setFontSize(14);
+          pdf.text(`Removed from ${fileBName}`, 15, y);
+          pdf.setFontSize(12);
+          pdf.text(`Page ${step.aIndex + 1} (exists in original)`, 15, y + 8);
           pdf.setTextColor(0);
           pdf.setFontSize(10);
-          pdf.text("This page exists only in the original PDF.", 15, y + 8);
+          pdf.text("This page exists only in the original PDF.", 15, y + 18);
           continue;
         }
 
         const similarityPct = Math.max(0, 100 - step.cost * 100).toFixed(2);
+
+        // SKIP 100% identical pages in PDF too
+        if (parseFloat(similarityPct) === 100) {
+          continue;
+        }
+
         const aLabel = `${fileAName} Page ${step.aIndex + 1}`;
         const bLabel = `${fileBName} Page ${step.bIndex + 1}`;
 
         pdf.setTextColor(0);
-        pdf.setFontSize(12);
-        pdf.text(`${aLabel} ↔ ${bLabel}`, 15, y);
-        pdf.setFontSize(10);
+        pdf.setFontSize(13);
+        const headingText = `${aLabel} ↔ ${bLabel}`;
+        pdf.text(headingText, 15, y);
+        
+        pdf.setFontSize(11);
         pdf.text(`Similarity: ${similarityPct}%`, 15, y + 7);
 
         const out = diffOnlyCanvas(pagesA[step.aIndex], pagesB[step.bIndex], pixelOpts);
         const imgData = out.diffCanvas.toDataURL(mime, exportQuality);
 
         const margin = 15;
-        const top = y + 14;
+        const top = y + 16;
         const maxW = pageW - margin * 2;
-        const maxH = pageH - top - 15;
+        const maxH = pageH - top - 12;
 
         let imgW = maxW;
         let imgH = (out.diffCanvas.height / out.diffCanvas.width) * imgW;
@@ -507,7 +526,6 @@
     }
   };
 
-  // Startup breadcrumb (helps diagnose “nothing happens”). [web:269]
   setStatus("Ready. Select two PDFs, then click Compare.", "info");
   log("script.js loaded; window.compare and window.downloadComparison are ready.");
 })();

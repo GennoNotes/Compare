@@ -24,7 +24,7 @@
     if (!window.pixelmatch || typeof window.pixelmatch !== "function") {
       throw new Error("pixelmatch missing (window.pixelmatch).");
     }
-    if (!window.html2pdf) throw new Error("html2pdf missing (html2pdf.bundle.min.js).");
+    if (!window.jspdf || !window.jspdf.jsPDF) throw new Error("jsPDF missing.");
     return pdfjsLib;
   }
 
@@ -303,7 +303,6 @@
     return { diffCanvas, diffCount, width, height };
   }
 
-  // Stored for PDF download
   let lastResults = null;
 
   async function runCompare(fileA, fileB) {
@@ -348,6 +347,7 @@
 
     const pixelOpts = { threshold, includeAA, alpha, diffColor: [255, 0, 0] };
 
+    // CRITICAL: store fileA.name and fileB.name here
     lastResults = {
       steps: aligned.steps,
       pagesA,
@@ -430,7 +430,6 @@
       const { steps, pagesA, pagesB, pixelOpts, fileAName, fileBName } = lastResults;
       const largeReport = $("largeReport") ? $("largeReport").checked : false;
 
-      // For large reports, reduce scale and use JPEG to reduce memory/file size (canvas limits vary by device/browser). [web:240][web:220]
       const exportScale = largeReport ? 1 : 2;
       const exportImageType = largeReport ? "jpeg" : "png";
       const exportQuality = largeReport ? 0.80 : 0.98;
@@ -438,57 +437,42 @@
 
       log(`Building PDF… (largeReport=${largeReport}, scale=${exportScale}, image=${exportImageType})`);
 
-      const container = document.createElement("div");
-      container.style.padding = "16px";
-      container.style.backgroundColor = "white";
-      container.style.color = "black";
-      container.style.fontFamily = "Arial, sans-serif";
+      // Use jsPDF directly to add pages sequentially. [web:230]
+      const { jsPDF } = window.jspdf;
+      const pdf = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4", compress: true });
 
-      const h1 = document.createElement("h1");
-      h1.textContent = "PDF Comparison Report";
-      h1.style.margin = "0 0 6px 0";
-      container.appendChild(h1);
-
-      const meta = document.createElement("div");
-      meta.textContent = `${fileAName} vs ${fileBName} — Generated ${new Date().toLocaleString()}`;
-      meta.style.color = "#666";
-      meta.style.marginBottom = "16px";
-      container.appendChild(meta);
+      // Add title page
+      let isFirstPage = true;
+      pdf.setFontSize(20);
+      pdf.text("PDF Comparison Report", 15, 25);
+      pdf.setFontSize(12);
+      pdf.text(`${fileAName} vs ${fileBName}`, 15, 35);
+      pdf.setFontSize(10);
+      pdf.text(`Generated: ${new Date().toLocaleString()}`, 15, 45);
 
       for (const step of steps) {
-        const section = document.createElement("div");
-        // Force a page break after each section using legacy class + CSS mode. [web:208]
-        section.className = "pdf-report-section html2pdf__page-break";
-        section.style.paddingBottom = "12px";
+        if (!isFirstPage) pdf.addPage(); // Add new page for each result
+        isFirstPage = false;
 
-        const title = document.createElement("h2");
-        title.style.margin = "0 0 8px 0";
+        let yPos = 20;
 
         if (step.type === "insertB") {
-          title.textContent = `Inserted page in ${fileBName}: Page ${step.bIndex + 1}`;
-          title.style.color = "#8a5a00";
-          section.appendChild(title);
-
-          const note = document.createElement("div");
-          note.textContent = "This page exists only in the updated PDF.";
-          note.style.color = "#666";
-          section.appendChild(note);
-
-          container.appendChild(section);
+          pdf.setTextColor(138, 90, 0); // warning color
+          pdf.setFontSize(14);
+          pdf.text(`Inserted in ${fileBName}: Page ${step.bIndex + 1}`, 15, yPos);
+          pdf.setTextColor(0);
+          pdf.setFontSize(10);
+          pdf.text("This page exists only in the updated PDF.", 15, yPos + 8);
           continue;
         }
 
         if (step.type === "deleteA") {
-          title.textContent = `Removed from ${fileBName} (exists in ${fileAName}): Page ${step.aIndex + 1}`;
-          title.style.color = "#8a5a00";
-          section.appendChild(title);
-
-          const note = document.createElement("div");
-          note.textContent = "This page exists only in the original PDF.";
-          note.style.color = "#666";
-          section.appendChild(note);
-
-          container.appendChild(section);
+          pdf.setTextColor(138, 90, 0); // warning color
+          pdf.setFontSize(14);
+          pdf.text(`Removed from ${fileBName} (exists in ${fileAName}): Page ${step.aIndex + 1}`, 15, yPos);
+          pdf.setTextColor(0);
+          pdf.setFontSize(10);
+          pdf.text("This page exists only in the original PDF.", 15, yPos + 8);
           continue;
         }
 
@@ -496,40 +480,34 @@
         const aLabel = `${fileAName} Page ${step.aIndex + 1}`;
         const bLabel = `${fileBName} Page ${step.bIndex + 1}`;
 
-        title.textContent = `${aLabel} ↔ ${bLabel} | Similarity: ${similarityPct}%`;
-        section.appendChild(title);
+        pdf.setTextColor(0);
+        pdf.setFontSize(12);
+        pdf.text(`${aLabel} ↔ ${bLabel}`, 15, yPos);
+
+        pdf.setFontSize(10);
+        pdf.text(`Similarity: ${similarityPct}%`, 15, yPos + 7);
 
         const out = diffOnlyCanvas(pagesA[step.aIndex], pagesB[step.bIndex], pixelOpts);
+        const imgData = out.diffCanvas.toDataURL(mime, exportQuality);
 
-        const info = document.createElement("div");
-        info.textContent = `Diff size: ${out.width}×${out.height}`;
-        info.style.color = "#666";
-        info.style.margin = "0 0 8px 0";
-        section.appendChild(info);
+        // Calculate image dimensions to fit on page
+        const pageWidth = pdf.internal.pageSize.getWidth();
+        const pageHeight = pdf.internal.pageSize.getHeight();
+        const maxWidth = pageWidth - 30; // 15mm margins
+        const maxHeight = pageHeight - yPos - 25; // leave room for header
 
-        const img = document.createElement("img");
-        img.src = out.diffCanvas.toDataURL(mime, exportQuality);
-        img.style.width = "100%";
-        img.style.maxWidth = "900px";
-        img.style.border = "1px solid #ccc";
-        img.style.display = "block";
-        section.appendChild(img);
+        let imgWidth = maxWidth;
+        let imgHeight = (out.diffCanvas.height / out.diffCanvas.width) * imgWidth;
 
-        container.appendChild(section);
+        if (imgHeight > maxHeight) {
+          imgHeight = maxHeight;
+          imgWidth = (out.diffCanvas.width / out.diffCanvas.height) * imgHeight;
+        }
+
+        pdf.addImage(imgData, exportImageType.toUpperCase(), 15, yPos + 14, imgWidth, imgHeight);
       }
 
-      const opt = {
-        margin: 10,
-        filename: "pdf-comparison.pdf",
-        image: { type: exportImageType, quality: exportQuality },
-        html2canvas: { scale: exportScale },
-        jsPDF: { orientation: "portrait", unit: "mm", format: "a4", compress: true },
-        pagebreak: { mode: ["css", "legacy"] } // page-break behavior + legacy class support. [web:208]
-      };
-
-      log("Rendering to PDF…");
-      await html2pdf().set(opt).from(container).save(); // html2pdf API. [web:208]
-
+      pdf.save("pdf-comparison.pdf");
       log("PDF downloaded successfully!");
       if (dlBtn) dlBtn.disabled = false;
     } catch (err) {

@@ -1,3 +1,13 @@
+/*
+  REQUIREMENTS (load these scripts in your HTML before this snippet):
+    - pdf.js (pdfjsLib)       -> window.pdfjsLib
+    - pixelmatch              -> window.pixelmatch
+    - jsPDF                   -> window.jspdf.jsPDF or window.jsPDF
+
+  Transformers.js is loaded dynamically as an ES module inside the script.
+  No UMD / window.transformers dependency needed.
+*/
+
 (function () {
   "use strict";
   const NL = "\n";
@@ -270,20 +280,19 @@
   // =========================
   // LLM CONFIG
   // =========================
-  const LLM_ENABLED      = true;
-  // The library does NOT provide a UMD/window global; it must be imported as an ES module.
-  const LLM_CDN_URL      = "https://cdn.jsdelivr.net/npm/@huggingface/transformers@3/dist/transformers.min.js";
-  const LLM_TASK         = "text2text-generation";
-  const LLM_MODEL        = "Xenova/LaMini-Flan-T5-783M";
-  const LLM_MAX_INPUT_CHARS  = 3000;
-  const LLM_MAX_NEW_TOKENS   = 200;
-  const LLM_MIN_DIFF_CHARS   = 1;
+  const LLM_ENABLED         = true;
+  const LLM_CDN_URL         = "https://cdn.jsdelivr.net/npm/@huggingface/transformers@3/dist/transformers.min.js";
+  const LLM_TASK            = "text2text-generation";
+  const LLM_MODEL           = "Xenova/LaMini-Flan-T5-783M";
+  const LLM_MAX_INPUT_CHARS = 3000;
+  const LLM_MAX_NEW_TOKENS  = 200;
+  const LLM_MIN_DIFF_CHARS  = 1;
 
   // =========================
   // LLM HELPERS
   // =========================
-  let _summarizer    = null;
-  let _transformers  = null;  
+  let _summarizer   = null;
+  let _transformers = null;
 
   async function loadTransformers() {
     if (_transformers) return _transformers;
@@ -382,15 +391,38 @@
     return extractText(out) || null;
   }
 
-  async function summarizeOverallChanges(perPageSummaries) {
+  async function summarizeSinglePage(text, disposition) {
     const summarizer = await getSummarizer();
     if (!summarizer) return null;
+    if (!text || text.trim().length < LLM_MIN_DIFF_CHARS) return null;
 
-    const prompt = buildOverallPrompt(perPageSummaries);
-    if (!prompt) return null;
+    const prompt =
+      "This page was " + disposition + " in the updated document. " +
+      "Briefly summarize what this page contains.\n\n" +
+      "Page content: " + truncateMiddle(text, LLM_MAX_INPUT_CHARS);
 
     const out = await summarizer(prompt, { max_new_tokens: LLM_MAX_NEW_TOKENS });
     return extractText(out) || null;
+  }
+
+  async function summarizeOverallChanges(perPageSummaries) {
+    const summarizer = await getSummarizer();
+    if (!summarizer) return null;
+    const prompt = buildOverallPrompt(perPageSummaries);
+    if (!prompt) return null;
+    const out = await summarizer(prompt, { max_new_tokens: LLM_MAX_NEW_TOKENS });
+    return extractText(out) || null;
+  }
+
+  // =========================
+  // SEMANTIC SUMMARY BLOCK HELPER
+  // Used in both HTML render and PDF export to avoid duplication
+  // =========================
+  function makeSemanticDiv(summary, label = "Change summary") {
+    const t = document.createElement("div");
+    t.style.cssText = "margin-top:6px;font-size:0.95em;color:#333;";
+    t.textContent = label + ": " + summary;
+    return t;
   }
 
   // =========================
@@ -409,12 +441,12 @@
     const results = mustGet("results");
     results.innerHTML = "";
 
-    const renderScale  = 2.0;
-    const includeAA    = false;
-    const threshold    = parseFloat(mustGet("threshold").value);
-    const alpha        = parseFloat(mustGet("alpha").value);
-    const matchWindow  = parseInt(mustGet("matchWindow").value, 10);
-    const scanned      = $("scanned") ? $("scanned").checked : false;
+    const renderScale = 2.0;
+    const includeAA   = false;
+    const threshold   = parseFloat(mustGet("threshold").value);
+    const alpha       = parseFloat(mustGet("alpha").value);
+    const matchWindow = parseInt(mustGet("matchWindow").value, 10);
+    const scanned     = $("scanned") ? $("scanned").checked : false;
 
     const [pdfA, pdfB] = await Promise.all([loadPdf(fileA), loadPdf(fileB)]);
 
@@ -441,22 +473,42 @@
       threshold, includeAA, matchWindow, scanned,
     });
 
-    // Per-page LLM summaries
+    setStatus("Generating semantic summaries…", "info");
+
+    // Per-page LLM summaries — now covers match, insertB, and deleteA
     const perPageSummaries = [];
     for (const step of aligned.steps) {
-      if (step.type !== "match") {
-        perPageSummaries.push(null);
-        continue;
-      }
       try {
-        const s = await summarizeDiffText(
-          textsA[step.aIndex] || "",
-          textsB[step.bIndex] || ""
-        );
-        step.semanticSummary = s || null;
-        perPageSummaries.push(s || null);
+        if (step.type === "match") {
+          const s = await summarizeDiffText(
+            textsA[step.aIndex] || "",
+            textsB[step.bIndex] || ""
+          );
+          step.semanticSummary = s || null;
+          perPageSummaries.push(s || null);
+
+        } else if (step.type === "insertB") {
+          const text = textsB[step.bIndex] || "";
+          const s = text.trim().length > LLM_MIN_DIFF_CHARS
+            ? await summarizeSinglePage(text, "inserted")
+            : null;
+          step.semanticSummary = s || null;
+          perPageSummaries.push(s || null);
+
+        } else if (step.type === "deleteA") {
+          const text = textsA[step.aIndex] || "";
+          const s = text.trim().length > LLM_MIN_DIFF_CHARS
+            ? await summarizeSinglePage(text, "removed")
+            : null;
+          step.semanticSummary = s || null;
+          perPageSummaries.push(s || null);
+
+        } else {
+          perPageSummaries.push(null);
+        }
       } catch (e) {
         console.warn("LLM page summary failed:", e);
+        step.semanticSummary = null;
         perPageSummaries.push(null);
       }
     }
@@ -480,6 +532,9 @@
       overallSummary,
     };
 
+    // =========================
+    // RENDER HTML RESULTS
+    // =========================
     results.innerHTML = "";
 
     if (overallSummary) {
@@ -497,6 +552,9 @@
       if (step.type === "insertB") {
         block.appendChild(makeTitle(`Inserted Page: ${fileB.name} (Page ${step.bIndex + 1})`));
         block.appendChild(makeMeta(`This page exists only in ${fileB.name}`));
+        if (step.semanticSummary) {
+          block.appendChild(makeSemanticDiv(step.semanticSummary, "Page summary"));
+        }
         results.appendChild(block);
         continue;
       }
@@ -504,10 +562,14 @@
       if (step.type === "deleteA") {
         block.appendChild(makeTitle(`Removed from ${fileB.name} (exists in ${fileA.name}): (Page ${step.aIndex + 1})`));
         block.appendChild(makeMeta(`This page exists only in ${fileA.name}`));
+        if (step.semanticSummary) {
+          block.appendChild(makeSemanticDiv(step.semanticSummary, "Page summary"));
+        }
         results.appendChild(block);
         continue;
       }
 
+      // match
       const out = diffOnlyCanvas(pagesA[step.aIndex], pagesB[step.bIndex], pixelOpts);
       const similarityPct = Math.max(0, 100 - step.cost * 100).toFixed(2);
       const aLabel = `${fileA.name} (Page ${step.aIndex + 1})`;
@@ -517,10 +579,7 @@
       block.appendChild(makeMeta(`Similarity = ${similarityPct}%  (Different Pixels = ${out.diffCount})`));
 
       if (step.semanticSummary) {
-        const t = document.createElement("div");
-        t.style.cssText = "margin-top:6px;font-size:0.95em;color:#333;";
-        t.textContent = "Change summary: " + step.semanticSummary;
-        block.appendChild(t);
+        block.appendChild(makeSemanticDiv(step.semanticSummary, "Change summary"));
       }
 
       block.appendChild(out.diffCanvas);
@@ -618,20 +677,38 @@
         if (step.type === "insertB") {
           pdf.setFontSize(14);
           pdf.text(`Inserted page in ${fileBName}`, 15, y);
+          y += 8;
           pdf.setFontSize(12);
-          pdf.text(`Page ${step.bIndex + 1}`, 15, y + 8);
-          pdf.text(`This page only exists in ${fileBName}`, 15, y + 18);
-          continue;
-        }
-        if (step.type === "deleteA") {
-          pdf.setFontSize(14);
-          pdf.text(`Removed from ${fileBName}`, 15, y);
-          pdf.setFontSize(12);
-          pdf.text(`Page ${step.aIndex + 1} (exists in original)`, 15, y + 8);
-          pdf.text(`This page exists only in ${fileAName}`, 15, y + 18);
+          pdf.text(`Page ${step.bIndex + 1}`, 15, y);
+          y += 8;
+          pdf.text(`This page only exists in ${fileBName}`, 15, y);
+          y += 8;
+          if (step.semanticSummary) {
+            pdf.setFontSize(11);
+            const sumLines = pdf.splitTextToSize("Page summary: " + step.semanticSummary, pageW - 30);
+            pdf.text(sumLines, 15, y);
+          }
           continue;
         }
 
+        if (step.type === "deleteA") {
+          pdf.setFontSize(14);
+          pdf.text(`Removed from ${fileBName}`, 15, y);
+          y += 8;
+          pdf.setFontSize(12);
+          pdf.text(`Page ${step.aIndex + 1} (exists in original)`, 15, y);
+          y += 8;
+          pdf.text(`This page exists only in ${fileAName}`, 15, y);
+          y += 8;
+          if (step.semanticSummary) {
+            pdf.setFontSize(11);
+            const sumLines = pdf.splitTextToSize("Page summary: " + step.semanticSummary, pageW - 30);
+            pdf.text(sumLines, 15, y);
+          }
+          continue;
+        }
+
+        // match
         const out = diffOnlyCanvas(pagesA[step.aIndex], pagesB[step.bIndex], pixelOpts);
         const similarityPct = Math.max(0, 100 - step.cost * 100).toFixed(2);
         const aLabel  = `${fileAName} (Page ${step.aIndex + 1})`;
@@ -647,7 +724,6 @@
         y += 7;
 
         if (step.semanticSummary) {
-          pdf.setFontSize(11);
           const sumLines = pdf.splitTextToSize("Change summary: " + step.semanticSummary, pageW - 30);
           pdf.text(sumLines, 15, y);
           y += sumLines.length * 5 + 3;

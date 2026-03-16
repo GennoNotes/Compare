@@ -1,3 +1,17 @@
+/*
+  REQUIREMENTS (load these scripts in your HTML before this snippet):
+    - pdf.js (pdfjsLib)       -> window.pdfjsLib
+    - pixelmatch              -> window.pixelmatch
+    - jsPDF                   -> window.jspdf.jsPDF or window.jsPDF
+    - Transformers.js (UMD)   -> window.transformers
+
+  Example (you can self-host or pin versions as needed):
+    https://cdn.jsdelivr.net/npm/pdfjs-dist/build/pdf.min.js</script>
+    https://cdn.jsdelivr.net/npm/pixelmatch/dist/pixelmatch.umd.js</script>
+    https://cdn.jsdelivr.net/npm/jspdf/dist/jspdf.umd.min.js</script>
+    https://cdn.jsdelivr.net/npm/@xenova/transformers/dist/transformers.min.js</script>
+*/
+
 (function () {
   const NL = "\n";
   const $ = (id) => document.getElementById(id);
@@ -285,6 +299,115 @@
     return { diffCanvas, diffCount, width, height };
   }
 
+  // =========================
+  // LLM CONFIG (client-only)
+  // =========================
+  const LLM_ENABLED = true;
+  const LLM_TASK = 'text2text-generation';
+  const LLM_MODEL = 'Xenova/flan-t5-small'; // smaller, lighter, fully in-browser
+  const LLM_MAX_INPUT_CHARS = 3000;
+  const LLM_MAX_NEW_TOKENS = 96;
+  const LLM_MIN_DIFF_CHARS = 40;
+
+  // =========================
+  // LLM HELPERS
+  // =========================
+  let _summarizer = null;
+
+  async function getSummarizer() {
+    if (!LLM_ENABLED) return null;
+    if (typeof window.transformers === 'undefined') {
+      console.warn('Transformers.js not loaded; LLM summaries disabled.');
+      return null;
+    }
+    if (_summarizer) return _summarizer;
+    const { pipeline } = window.transformers;
+    _summarizer = await pipeline(LLM_TASK, LLM_MODEL);
+    return _summarizer;
+  }
+
+  function truncateMiddle(s, maxChars) {
+    const t = String(s || '');
+    if (t.length <= maxChars) return t;
+    const head = Math.floor(maxChars * 0.6);
+    const tail = Math.max(0, maxChars - head - 20);
+    return t.slice(0, head) + '\n...\n' + t.slice(-tail);
+  }
+
+  function roughChangedExcerpt(aText, bText) {
+    const a = String(aText || '');
+    const b = String(bText || '');
+    if (!a || !b) return { aFrag: a.slice(0, 800), bFrag: b.slice(0, 800) };
+
+    const limit = Math.min(a.length, b.length);
+    let i = 0;
+    while (i < limit && a[i] === b[i]) i++;
+    const start = Math.max(0, i - 400);
+
+    let j = 0;
+    while (j < limit && a[a.length - 1 - j] === b[b.length - 1 - j]) j++;
+    const endA = Math.min(a.length, a.length - Math.max(0, j - 400));
+    const endB = Math.min(b.length, b.length - Math.max(0, j - 400));
+
+    const aFrag = a.slice(start, endA).slice(0, 1600);
+    const bFrag = b.slice(start, endB).slice(0, 1600);
+    return { aFrag, bFrag };
+  }
+
+  async function summarizeDiffText(aText, bText) {
+    const summarizer = await getSummarizer();
+    if (!summarizer) return null;
+
+    const aN = (aText || '').trim().length;
+    const bN = (bText || '').trim().length;
+    if (aN < LLM_MIN_DIFF_CHARS && bN < LLM_MIN_DIFF_CHARS) return null;
+
+    const { aFrag, bFrag } = roughChangedExcerpt(aText, bText);
+
+    const prompt = [
+      'Summarize the differences between the two page versions.',
+      'Be concise and specific. Focus on meaning changes (additions, removals, rewording), not cosmetic layout differences.',
+      '',
+      '--- ORIGINAL ---',
+      truncateMiddle(aFrag, Math.floor(LLM_MAX_INPUT_CHARS / 2)),
+      '--- UPDATED ---',
+      truncateMiddle(bFrag, Math.floor(LLM_MAX_INPUT_CHARS / 2)),
+    ].join('\n');
+
+    const out = await summarizer(prompt, { max_new_tokens: LLM_MAX_NEW_TOKENS });
+    const first = Array.isArray(out) ? out[0] : out;
+    const text = (first && (first.generated_text || first.summary_text))
+      ? (first.generated_text || first.summary_text)
+      : String(first || '');
+    return text.trim();
+  }
+
+  async function summarizeOverallChanges(perPageSummaries) {
+    const summarizer = await getSummarizer();
+    if (!summarizer) return null;
+
+    const joined = perPageSummaries
+      .filter(Boolean)
+      .map((s, i) => `Page ${i + 1}: ${s}`)
+      .join('\n');
+
+    if (!joined) return null;
+
+    const prompt = [
+      'Provide a brief overall summary of the changes across all pages below.',
+      'Group related changes and highlight material updates vs minor edits.',
+      '',
+      joined.length > LLM_MAX_INPUT_CHARS ? truncateMiddle(joined, LLM_MAX_INPUT_CHARS) : joined
+    ].join('\n');
+
+    const out = await summarizer(prompt, { max_new_tokens: LLM_MAX_NEW_TOKENS });
+    const first = Array.isArray(out) ? out[0] : out;
+    const text = (first && (first.generated_text || first.summary_text))
+      ? (first.generated_text || first.summary_text)
+      : String(first || '');
+    return text.trim();
+  }
+
   let lastResults = null;
 
   async function runCompare(fileA, fileB) {
@@ -295,7 +418,7 @@
     results.innerHTML = "";
 
     const renderScale = 2.0;           // fixed
-    const includeAA = false;           // fixed (pixelmatch includeAA described in docs) [web:76]
+    const includeAA = false;           // fixed
     const threshold = parseFloat(mustGet("threshold").value);
     const alpha = parseFloat(mustGet("alpha").value);
     const matchWindow = parseInt(mustGet("matchWindow").value, 10);
@@ -326,6 +449,33 @@
       scanned
     });
 
+    // ==== NEW: build per-page LLM summaries for matched pages ====
+    let perPageSummaries = [];
+    try {
+      const summaries = [];
+      for (const step of aligned.steps) {
+        if (step.type !== 'match') {
+          summaries.push(null);
+          continue;
+        }
+        const aIdx = step.aIndex, bIdx = step.bIndex;
+        const s = await summarizeDiffText(textsA[aIdx] || '', textsB[bIdx] || '');
+        step.semanticSummary = s || null;
+        summaries.push(s || null);
+      }
+      perPageSummaries = summaries;
+    } catch (e) {
+      console.warn('LLM page summaries failed or disabled:', e);
+    }
+
+    // ==== NEW: overall summary ====
+    let overallSummary = null;
+    try {
+      overallSummary = await summarizeOverallChanges(perPageSummaries);
+    } catch (e) {
+      console.warn('LLM overall summary failed or disabled:', e);
+    }
+
     const pixelOpts = { threshold, includeAA, alpha, diffColor: [255, 0, 0] };
 
     lastResults = {
@@ -334,10 +484,22 @@
       pagesB,
       pixelOpts,
       fileAName: fileA.name,
-      fileBName: fileB.name
+      fileBName: fileB.name,
+      overallSummary
     };
 
+    // Render HTML results
     results.innerHTML = "";
+
+    // Show overall summary at top, if present
+    if (overallSummary) {
+      const top = document.createElement("div");
+      top.className = "block";
+      top.appendChild(makeTitle("Overall change summary"));
+      top.appendChild(makeMeta(overallSummary));
+      results.appendChild(top);
+    }
+
     for (const step of aligned.steps) {
       const block = document.createElement("div");
       block.className = "block";
@@ -364,12 +526,24 @@
       if (out.diffCount === 0) {
         block.appendChild(makeTitle(`No changes: ${aLabel} <--> ${bLabel}`, false));
         block.appendChild(makeMeta("Pages are identical."));
+        // Semantic summary likely empty; skip
         results.appendChild(block);
         continue;
       }
 
       block.appendChild(makeTitle(`${aLabel} <--> ${bLabel}`));
       block.appendChild(makeMeta(`Similarity = ${similarityPct}%  (Different Pixels = ${out.diffCount})`));
+
+      // NEW: show semantic summary if available
+      if (step.semanticSummary) {
+        const t = document.createElement("div");
+        t.style.marginTop = "6px";
+        t.style.fontSize = "0.95em";
+        t.style.color = "#333";
+        t.textContent = "Change summary: " + step.semanticSummary;
+        block.appendChild(t);
+      }
+
       block.appendChild(out.diffCanvas);
       results.appendChild(block);
     }
@@ -417,121 +591,137 @@
     }
   };
 
-window.downloadComparison = async function downloadComparison() {
-  try {
-    if (!lastResults) {
-      setStatus("No comparison results available. Run Start first.", "warn");
-      return;
-    }
+  window.downloadComparison = async function downloadComparison() {
+    try {
+      if (!lastResults) {
+        setStatus("No comparison results available. Run Start first.", "warn");
+        return;
+      }
 
-    const dlBtn = $("downloadPdfBtn");
-    if (dlBtn) dlBtn.disabled = true;
+      const dlBtn = $("downloadPdfBtn");
+      if (dlBtn) dlBtn.disabled = true;
 
-    const JsPDF = getJsPDFConstructor();
-    if (!JsPDF) throw new Error("jsPDF missing.");
+      const JsPDF = getJsPDFConstructor();
+      if (!JsPDF) throw new Error("jsPDF missing.");
 
-    const { steps, pagesA, pagesB, pixelOpts, fileAName, fileBName } = lastResults;
-    const largeReport = $("largeReport") ? $("largeReport").checked : false;
+      const { steps, pagesA, pagesB, pixelOpts, fileAName, fileBName, overallSummary } = lastResults;
+      const largeReport = $("largeReport") ? $("largeReport").checked : false;
 
-    const exportImageType = largeReport ? "jpeg" : "png";
-    const exportQuality = largeReport ? 0.80 : 0.98;
-    const mime = exportImageType === "jpeg" ? "image/jpeg" : "image/png";
+      const exportImageType = largeReport ? "jpeg" : "png";
+      const exportQuality = largeReport ? 0.80 : 0.98;
+      const mime = exportImageType === "jpeg" ? "image/jpeg" : "image/png";
 
-    setStatus("Building PDF report…", "info");
+      setStatus("Building PDF report…", "info");
 
-    const pdf = new JsPDF({ orientation: "portrait", unit: "mm", format: "a4", compress: true });
-    const pageW = pdf.internal.pageSize.getWidth();
-    const pageH = pdf.internal.pageSize.getHeight();
+      const pdf = new JsPDF({ orientation: "portrait", unit: "mm", format: "a4", compress: true });
+      const pageW = pdf.internal.pageSize.getWidth();
+      const pageH = pdf.internal.pageSize.getHeight();
 
-    // Title page
-    pdf.setTextColor(0, 0, 0);
-    pdf.setFontSize(22);
-    pdf.text("Comparison Report", 15, 28);
-    pdf.setFontSize(12);
-    pdf.text(fileAName, 15, 40);
-    pdf.text("vs.", 15, 47);
-    pdf.text(fileBName, 15, 54);
-    pdf.setFontSize(10);
-    pdf.text(`Generated: ${new Date().toLocaleString()}`, 15, 66);
-
-    for (const step of steps) {
-      pdf.addPage();
-
-      let y = 12;
+      // Title page
       pdf.setTextColor(0, 0, 0);
+      pdf.setFontSize(22);
+      pdf.text("Comparison Report", 15, 28);
       pdf.setFontSize(12);
+      pdf.text(fileAName, 15, 40);
+      pdf.text("vs.", 15, 47);
+      pdf.text(fileBName, 15, 54);
+      pdf.setFontSize(10);
+      pdf.text(`Generated: ${new Date().toLocaleString()}`, 15, 66);
 
-      if (step.type === "insertB") {
-        pdf.setFontSize(14);
-        pdf.text(`Inserted page in ${fileBName}`, 15, y);
+      // NEW: overall summary on title page
+      if (overallSummary) {
         pdf.setFontSize(12);
-        pdf.text(`Page ${step.bIndex + 1}`, 15, y + 8);
-        pdf.text(`This page only exists in ${fileBName}`, 15, y + 18);
-        continue;
+        pdf.text("Overall change summary:", 15, 80);
+        pdf.setFontSize(11);
+        const lines = pdf.splitTextToSize(overallSummary, pageW - 30);
+        pdf.text(lines, 15, 88);
       }
 
-      if (step.type === "deleteA") {
-        pdf.setFontSize(14);
-        pdf.text(`Removed from ${fileBName}`, 15, y);
+      for (const step of steps) {
+        pdf.addPage();
+
+        let y = 12;
+        pdf.setTextColor(0, 0, 0);
         pdf.setFontSize(12);
-        pdf.text(`Page ${step.aIndex + 1} (exists in original)`, 15, y + 8);
-        pdf.text(`This page exists only in ${fileAName}`, 15, y + 18);
-        continue;
-      }
 
-      // Match page -> render diff canvas and embed as image
-      const out = diffOnlyCanvas(pagesA[step.aIndex], pagesB[step.bIndex], pixelOpts);
-      const similarityPct = Math.max(0, 100 - step.cost * 100).toFixed(2);
-      const aLabel = `${fileAName} (Page ${step.aIndex + 1})`;
-      const bLabel = `${fileBName} (Page ${step.bIndex + 1})`;
+        if (step.type === "insertB") {
+          pdf.setFontSize(14);
+          pdf.text(`Inserted page in ${fileBName}`, 15, y);
+          pdf.setFontSize(12);
+          pdf.text(`Page ${step.bIndex + 1}`, 15, y + 8);
+          pdf.text(`This page only exists in ${fileBName}`, 15, y + 18);
+          continue;
+        }
 
-      if (out.diffCount === 0) {
+        if (step.type === "deleteA") {
+          pdf.setFontSize(14);
+          pdf.text(`Removed from ${fileBName}`, 15, y);
+          pdf.setFontSize(12);
+          pdf.text(`Page ${step.aIndex + 1} (exists in original)`, 15, y + 8);
+          pdf.text(`This page exists only in ${fileAName}`, 15, y + 18);
+          continue;
+        }
+
+        const out = diffOnlyCanvas(pagesA[step.aIndex], pagesB[step.bIndex], pixelOpts);
+        const similarityPct = Math.max(0, 100 - step.cost * 100).toFixed(2);
+        const aLabel = `${fileAName} (Page ${step.aIndex + 1})`;
+        const bLabel = `${fileBName} (Page ${step.bIndex + 1})`;
+
+        if (out.diffCount === 0) {
+          pdf.setFontSize(12);
+          pdf.text(`No changes: ${aLabel} <--> ${bLabel}`, 15, y);
+          pdf.text("Pages are identical.", 15, y + 8);
+          continue;
+        }
+
+        // Wrap heading so it doesn't clip
         pdf.setFontSize(12);
-        pdf.text(`No changes: ${aLabel} <--> ${bLabel}`, 15, y);
-        pdf.text("Pages are identical.", 15, y + 8);
-        continue;
+        const heading = `${aLabel} <--> ${bLabel}`;
+        const headingLines = pdf.splitTextToSize(heading, pageW - 30);
+        pdf.text(headingLines, 15, y);
+        y += headingLines.length * 6;
+
+        pdf.setFontSize(11);
+        pdf.text(`Similarity = ${similarityPct}%  (Different Pixels = ${out.diffCount})`, 15, y);
+        y += 7;
+
+        // NEW: per-page semantic summary
+        if (step.semanticSummary) {
+          pdf.setFontSize(11);
+          const sumLines = pdf.splitTextToSize('Change summary: ' + step.semanticSummary, pageW - 30);
+          pdf.text(sumLines, 15, y);
+          y += sumLines.length * 5 + 3;
+        }
+
+        const imgData = out.diffCanvas.toDataURL(mime, exportQuality);
+
+        const margin = 15;
+        const top = y + 2;
+        const maxW = pageW - margin * 2;
+        const maxH = pageH - top - 12;
+
+        let imgW = maxW;
+        let imgH = (out.diffCanvas.height / out.diffCanvas.width) * imgW;
+
+        if (imgH > maxH) {
+          imgH = maxH;
+          imgW = (out.diffCanvas.width / out.diffCanvas.height) * imgH;
+        }
+
+        pdf.addImage(imgData, exportImageType.toUpperCase(), margin, top, imgW, imgH);
       }
 
-      // Wrap heading so it doesn't clip
-      pdf.setFontSize(12);
-      const heading = `${aLabel} <--> ${bLabel}`;
-      const headingLines = pdf.splitTextToSize(heading, pageW - 30); // jsPDF helper [web:288]
-      pdf.text(headingLines, 15, y);
-      y += headingLines.length * 6;
+      pdf.save("GennoCompare.pdf");
 
-      pdf.setFontSize(11);
-      pdf.text(`Similarity = ${similarityPct}%  (Different Pixels = ${out.diffCount})`, 15, y);
-      y += 7;
-
-      const imgData = out.diffCanvas.toDataURL(mime, exportQuality);
-
-      const margin = 15;
-      const top = y + 2;
-      const maxW = pageW - margin * 2;
-      const maxH = pageH - top - 12;
-
-      let imgW = maxW;
-      let imgH = (out.diffCanvas.height / out.diffCanvas.width) * imgW;
-
-      if (imgH > maxH) {
-        imgH = maxH;
-        imgW = (out.diffCanvas.width / out.diffCanvas.height) * imgH;
-      }
-
-      pdf.addImage(imgData, exportImageType.toUpperCase(), margin, top, imgW, imgH);
+      setStatus("PDF downloaded.", "info");
+      if (dlBtn) dlBtn.disabled = false;
+    } catch (err) {
+      console.error(err);
+      setStatus("PDF export failed: " + (err?.message || String(err)), "error");
+      const dlBtn = $("downloadPdfBtn");
+      if (dlBtn) dlBtn.disabled = false;
     }
-
-    pdf.save("GennoCompare.pdf");
-
-    setStatus("PDF downloaded.", "info");
-    if (dlBtn) dlBtn.disabled = false;
-  } catch (err) {
-    console.error(err);
-    setStatus("PDF export failed: " + (err?.message || String(err)), "error");
-    const dlBtn = $("downloadPdfBtn");
-    if (dlBtn) dlBtn.disabled = false;
-  }
-};
+  };
 
   setStatus("Ready. Select two PDFs, then click Compare.", "info");
 })();

@@ -1,4 +1,5 @@
 (function () {
+  "use strict";
   const NL = "\n";
   const $ = (id) => document.getElementById(id);
 
@@ -52,11 +53,9 @@
     for (let p = 1; p <= pdf.numPages; p++) {
       const page = await pdf.getPage(p);
       const viewport = page.getViewport({ scale });
-
       const canvas = document.createElement("canvas");
       canvas.width = Math.floor(viewport.width);
       canvas.height = Math.floor(viewport.height);
-
       await page.render({ canvasContext: canvas.getContext("2d"), viewport }).promise;
       canvases.push(canvas);
     }
@@ -87,15 +86,12 @@
   function cropToCommonSize(cA, cB) {
     const width = Math.min(cA.width, cB.width);
     const height = Math.min(cA.height, cB.height);
-
     const a = document.createElement("canvas");
     a.width = width; a.height = height;
     a.getContext("2d").drawImage(cA, 0, 0, width, height, 0, 0, width, height);
-
     const b = document.createElement("canvas");
     b.width = width; b.height = height;
     b.getContext("2d").drawImage(cB, 0, 0, width, height, 0, 0, width, height);
-
     return { a, b, width, height };
   }
 
@@ -114,10 +110,8 @@
     const aBand = cropVerticalBand(aCanvas, 0.12, 0.12);
     const bBand = cropVerticalBand(bCanvas, 0.12, 0.12);
     const { a, b, width, height } = cropToCommonSize(aBand, bBand);
-
     const aImg = a.getContext("2d").getImageData(0, 0, width, height);
     const bImg = b.getContext("2d").getImageData(0, 0, width, height);
-
     const out = new Uint8ClampedArray(width * height * 4);
     const diffCount = window.pixelmatch(aImg.data, bImg.data, out, width, height, { threshold, includeAA });
     return diffCount / (width * height);
@@ -143,7 +137,6 @@
     const B = tokenSet(textB);
     if (A.size === 0 && B.size === 0) return 0.5;
     if (A.size === 0 || B.size === 0) return 1.0;
-
     let inter = 0;
     for (const x of A) if (B.has(x)) inter++;
     const union = A.size + B.size - inter;
@@ -154,11 +147,9 @@
   function combinedCost(aIdx, bIdx, aSmall, bSmall, aText, bText, threshold, includeAA, scanned) {
     const pCost = pagePixelCost(aSmall[aIdx], bSmall[bIdx], threshold, includeAA);
     if (scanned) return pCost;
-
     const tCost = jaccardCost(aText[aIdx], bText[bIdx]);
     const aHasText = normalizeText(aText[aIdx]).length > 20;
     const bHasText = normalizeText(bText[bIdx]).length > 20;
-
     const wText = (aHasText && bHasText) ? 0.75 : 0.25;
     return wText * tCost + (1 - wText) * pCost;
   }
@@ -166,11 +157,9 @@
   function alignmentParamsFromMatchWindow(matchWindow) {
     const mw = Math.max(0, Math.min(5, matchWindow));
     const maxConsecutiveGaps = mw;
-
     const gapPenalty = mw === 0 ? 999 : (0.22 - mw * 0.032);
     const badMatchCutoff = 0.55 - mw * 0.05;
     const badMatchPenalty = mw * 0.04;
-
     return { maxConsecutiveGaps, gapPenalty, badMatchCutoff, badMatchPenalty };
   }
 
@@ -195,13 +184,12 @@
       return { steps };
     }
 
-    const dp = Array.from({ length: n + 1 }, () => new Float32Array(m + 1).fill(Infinity));
+    const dp   = Array.from({ length: n + 1 }, () => new Float32Array(m + 1).fill(Infinity));
     const back = Array.from({ length: n + 1 }, () => new Int8Array(m + 1));
     const gapA = Array.from({ length: n + 1 }, () => new Int16Array(m + 1));
     const gapB = Array.from({ length: n + 1 }, () => new Int16Array(m + 1));
 
     dp[0][0] = 0;
-
     for (let i = 1; i <= n; i++) {
       dp[i][0] = dp[i - 1][0] + gapPenalty;
       back[i][0] = 1;
@@ -230,17 +218,15 @@
         if (matchCost > badMatchCutoff) matchCost += badMatchPenalty;
 
         const cDiag = dp[i - 1][j - 1] + matchCost;
-
-        let cUp = Infinity;
-        if (gapA[i - 1][j] < maxConsecutiveGaps) cUp = dp[i - 1][j] + gapPenalty;
-
+        let cUp   = Infinity;
+        if (gapA[i - 1][j] < maxConsecutiveGaps) cUp   = dp[i - 1][j] + gapPenalty;
         let cLeft = Infinity;
         if (gapB[i][j - 1] < maxConsecutiveGaps) cLeft = dp[i][j - 1] + gapPenalty;
 
         if (cDiag <= cUp && cDiag <= cLeft) {
-          dp[i][j] = cDiag; back[i][j] = 0; gapA[i][j] = 0; gapB[i][j] = 0;
+          dp[i][j] = cDiag; back[i][j] = 0; gapA[i][j] = 0;  gapB[i][j] = 0;
         } else if (cUp <= cLeft) {
-          dp[i][j] = cUp; back[i][j] = 1; gapA[i][j] = gapA[i - 1][j] + 1; gapB[i][j] = 0;
+          dp[i][j] = cUp;   back[i][j] = 1; gapA[i][j] = gapA[i - 1][j] + 1; gapB[i][j] = 0;
         } else {
           dp[i][j] = cLeft; back[i][j] = 2; gapB[i][j] = gapB[i][j - 1] + 1; gapA[i][j] = 0;
         }
@@ -271,58 +257,65 @@
     const { a, b, width, height } = cropToCommonSize(aPage, bPage);
     const aImg = a.getContext("2d").getImageData(0, 0, width, height);
     const bImg = b.getContext("2d").getImageData(0, 0, width, height);
-
     const diffCanvas = document.createElement("canvas");
     diffCanvas.width = width;
     diffCanvas.height = height;
-
     const ctx = diffCanvas.getContext("2d");
     const diffImage = ctx.createImageData(width, height);
-
     const diffCount = window.pixelmatch(aImg.data, bImg.data, diffImage.data, width, height, pixelOpts);
     ctx.putImageData(diffImage, 0, 0);
-
     return { diffCanvas, diffCount, width, height };
   }
 
   // =========================
-  // LLM CONFIG (client-only)
+  // LLM CONFIG
   // =========================
-  const LLM_ENABLED = true;
-  const LLM_TASK = 'text2text-generation';
-  const LLM_MODEL = 'Xenova/flan-t5-small';           // smaller, faster, in-browser
-  const LLM_MAX_INPUT_CHARS = 3000;
-  const LLM_MAX_NEW_TOKENS = 96;
-  const LLM_MIN_DIFF_CHARS = 1;                        // lowered so short pages still summarize
+  const LLM_ENABLED      = true;
+  // The library does NOT provide a UMD/window global; it must be imported as an ES module.
+  const LLM_CDN_URL      = "https://cdn.jsdelivr.net/npm/@huggingface/transformers@3/dist/transformers.min.js";
+  const LLM_TASK         = "text2text-generation";
+  const LLM_MODEL        = "Xenova/LaMini-Flan-T5-783M";
+  const LLM_MAX_INPUT_CHARS  = 3000;
+  const LLM_MAX_NEW_TOKENS   = 200;
+  const LLM_MIN_DIFF_CHARS   = 1;
 
   // =========================
   // LLM HELPERS
   // =========================
-  let _summarizer = null;
+  let _summarizer    = null;
+  let _transformers  = null;  
+
+  async function loadTransformers() {
+    if (_transformers) return _transformers;
+    _transformers = await import(LLM_CDN_URL);
+    return _transformers;
+  }
 
   async function getSummarizer() {
     if (!LLM_ENABLED) return null;
-    if (typeof window.transformers === 'undefined') {
-      console.warn('Transformers.js not loaded; LLM summaries disabled.');
+    if (_summarizer) return _summarizer;
+    try {
+      const { pipeline, env } = await loadTransformers();
+      env.allowRemoteModels = true;
+      _summarizer = await pipeline(LLM_TASK, LLM_MODEL);
+      return _summarizer;
+    } catch (err) {
+      console.warn("Transformers.js failed to load; LLM summaries disabled.", err);
       return null;
     }
-    if (_summarizer) return _summarizer;
-    const { pipeline } = window.transformers;
-    _summarizer = await pipeline(LLM_TASK, LLM_MODEL);
-    return _summarizer;
   }
 
   function truncateMiddle(s, maxChars) {
-    const t = String(s || '');
+    const t = String(s || "");
     if (t.length <= maxChars) return t;
     const head = Math.floor(maxChars * 0.6);
     const tail = Math.max(0, maxChars - head - 20);
-    return t.slice(0, head) + '\n...\n' + t.slice(-tail);
+    return t.slice(0, head) + "\n...\n" + t.slice(-tail);
   }
 
   function roughChangedExcerpt(aText, bText) {
-    const a = String(aText || '');
-    const b = String(bText || '');
+    const a = String(aText || "");
+    const b = String(bText || "");
     if (!a || !b) return { aFrag: a.slice(0, 800), bFrag: b.slice(0, 800) };
 
     const limit = Math.min(a.length, b.length);
@@ -340,89 +333,99 @@
     return { aFrag, bFrag };
   }
 
+  function buildDiffPrompt(aFrag, bFrag) {
+    const half = Math.floor(LLM_MAX_INPUT_CHARS / 2);
+    const orig = truncateMiddle(aFrag, half);
+    const upd  = truncateMiddle(bFrag, half);
+    return (
+      "What are the differences between the following two document sections? " +
+      "Focus on additions, removals, and meaning changes. Be concise.\n\n" +
+      "Original: " + orig + "\n\n" +
+      "Updated: "  + upd
+    );
+  }
+
+  function buildOverallPrompt(perPageSummaries) {
+    const joined = perPageSummaries
+      .filter(Boolean)
+      .map((s, i) => "Page " + (i + 1) + ": " + s)
+      .join("\n");
+    if (!joined) return null;
+    const body = joined.length > LLM_MAX_INPUT_CHARS
+      ? truncateMiddle(joined, LLM_MAX_INPUT_CHARS)
+      : joined;
+    return (
+      "Summarize the following per-page change notes into a brief overall summary. " +
+      "Group related changes and distinguish material updates from minor edits.\n\n" +
+      body
+    );
+  }
+
+  function extractText(out) {
+    const first = Array.isArray(out) ? out[0] : out;
+    if (!first) return "";
+    if (typeof first === "string") return first.trim();
+    return ((first.generated_text || first.summary_text) || "").trim();
+  }
+
   async function summarizeDiffText(aText, bText) {
     const summarizer = await getSummarizer();
     if (!summarizer) return null;
 
     const { aFrag, bFrag } = roughChangedExcerpt(aText, bText);
+    const combinedLen = (aFrag + bFrag).replace(/\s/g, "").length;
+    if (combinedLen < LLM_MIN_DIFF_CHARS * 2) return null;
+    if (aFrag.trim() === bFrag.trim()) return "Pages appear identical.";
 
-    const prompt = [
-      'Summarize the differences between the two page versions.',
-      'Be concise and specific. Focus on meaning changes (additions, removals, rewording), not cosmetic layout differences.',
-      '',
-      '--- ORIGINAL ---',
-      truncateMiddle(aFrag, Math.floor(LLM_MAX_INPUT_CHARS / 2)),
-      '--- UPDATED ---',
-      truncateMiddle(bFrag, Math.floor(LLM_MAX_INPUT_CHARS / 2)),
-    ].join('\n');
-
+    const prompt = buildDiffPrompt(aFrag, bFrag);
     const out = await summarizer(prompt, { max_new_tokens: LLM_MAX_NEW_TOKENS });
-    const first = Array.isArray(out) ? out[0] : out;
-    const text = (first && (first.generated_text || first.summary_text))
-      ? (first.generated_text || first.summary_text)
-      : String(first || '');
-    return text.trim();
+    return extractText(out) || null;
   }
 
   async function summarizeOverallChanges(perPageSummaries) {
     const summarizer = await getSummarizer();
     if (!summarizer) return null;
 
-    const joined = perPageSummaries
-      .filter(Boolean)
-      .map((s, i) => `Page ${i + 1}: ${s}`)
-      .join('\n');
-
-    if (!joined) return null;
-
-    const prompt = [
-      'Provide a brief overall summary of the changes across all pages below.',
-      'Group related changes and highlight material updates vs minor edits.',
-      '',
-      joined.length > LLM_MAX_INPUT_CHARS ? truncateMiddle(joined, LLM_MAX_INPUT_CHARS) : joined
-    ].join('\n');
+    const prompt = buildOverallPrompt(perPageSummaries);
+    if (!prompt) return null;
 
     const out = await summarizer(prompt, { max_new_tokens: LLM_MAX_NEW_TOKENS });
-    const first = Array.isArray(out) ? out[0] : out;
-    const text = (first && (first.generated_text || first.summary_text))
-      ? (first.generated_text || first.summary_text)
-      : String(first || '');
-    return text.trim();
+    return extractText(out) || null;
   }
 
+  // =========================
+  // MAIN COMPARE LOGIC
+  // =========================
   let lastResults = null;
 
   async function runCompare(fileA, fileB) {
     assertLibraries();
 
-    // NEW: warm the LLM so summaries actually run on first use
-    try {
-      setStatus("Loading LLM (first run may take a moment)…", "info");
-      await getSummarizer();
-    } catch (_) {
-      /* ignore; will just skip summaries */
-    }
+    setStatus("Loading LLM (first run may take a moment)…", "info");
+    await getSummarizer().catch(() => {});
 
     setStatus("Reticulating splines...", "info");
 
     const results = mustGet("results");
     results.innerHTML = "";
 
-    const renderScale = 2.0;           // fixed
-    const includeAA = false;           // fixed
-    const threshold = parseFloat(mustGet("threshold").value);
-    const alpha = parseFloat(mustGet("alpha").value);
-    const matchWindow = parseInt(mustGet("matchWindow").value, 10);
-    const scanned = $("scanned") ? $("scanned").checked : false;
+    const renderScale  = 2.0;
+    const includeAA    = false;
+    const threshold    = parseFloat(mustGet("threshold").value);
+    const alpha        = parseFloat(mustGet("alpha").value);
+    const matchWindow  = parseInt(mustGet("matchWindow").value, 10);
+    const scanned      = $("scanned") ? $("scanned").checked : false;
 
     const [pdfA, pdfB] = await Promise.all([loadPdf(fileA), loadPdf(fileB)]);
 
     let textsA = [], textsB = [];
     if (!scanned) {
       setStatus("Extracting text…", "info");
-      [textsA, textsB] = await Promise.all([extractPdfPageTexts(pdfA), extractPdfPageTexts(pdfB)]);
+      [textsA, textsB] = await Promise.all([
+        extractPdfPageTexts(pdfA),
+        extractPdfPageTexts(pdfB),
+      ]);
     } else {
-      // If 'scanned' is checked, text arrays are empty -> summaries will be minimal.
       textsA = Array.from({ length: pdfA.numPages }, () => "");
       textsB = Array.from({ length: pdfB.numPages }, () => "");
     }
@@ -430,34 +433,32 @@
     setStatus("Rendering pages…", "info");
     const [pagesA, pagesB] = await Promise.all([
       renderPdfToCanvases(pdfA, renderScale),
-      renderPdfToCanvases(pdfB, renderScale)
+      renderPdfToCanvases(pdfB, renderScale),
     ]);
 
     setStatus("Matching pages…", "info");
     const aligned = await buildAlignmentDP(pagesA, pagesB, textsA, textsB, {
-      threshold,
-      includeAA,
-      matchWindow,
-      scanned
+      threshold, includeAA, matchWindow, scanned,
     });
 
-    // Build per-page LLM summaries for matched pages
-    let perPageSummaries = [];
-    try {
-      const summaries = [];
-      for (const step of aligned.steps) {
-        if (step.type !== 'match') {
-          summaries.push(null);
-          continue;
-        }
-        const aIdx = step.aIndex, bIdx = step.bIndex;
-        const s = await summarizeDiffText(textsA[aIdx] || '', textsB[bIdx] || '');
-        step.semanticSummary = s || null;
-        summaries.push(s || null);
+    // Per-page LLM summaries
+    const perPageSummaries = [];
+    for (const step of aligned.steps) {
+      if (step.type !== "match") {
+        perPageSummaries.push(null);
+        continue;
       }
-      perPageSummaries = summaries;
-    } catch (e) {
-      console.warn('LLM page summaries failed or disabled:', e);
+      try {
+        const s = await summarizeDiffText(
+          textsA[step.aIndex] || "",
+          textsB[step.bIndex] || ""
+        );
+        step.semanticSummary = s || null;
+        perPageSummaries.push(s || null);
+      } catch (e) {
+        console.warn("LLM page summary failed:", e);
+        perPageSummaries.push(null);
+      }
     }
 
     // Overall summary
@@ -465,22 +466,20 @@
     try {
       overallSummary = await summarizeOverallChanges(perPageSummaries);
     } catch (e) {
-      console.warn('LLM overall summary failed or disabled:', e);
+      console.warn("LLM overall summary failed:", e);
     }
 
     const pixelOpts = { threshold, includeAA, alpha, diffColor: [255, 0, 0] };
 
     lastResults = {
       steps: aligned.steps,
-      pagesA,
-      pagesB,
+      pagesA, pagesB,
       pixelOpts,
       fileAName: fileA.name,
       fileBName: fileB.name,
-      overallSummary
+      overallSummary,
     };
 
-    // Render HTML
     results.innerHTML = "";
 
     if (overallSummary) {
@@ -517,12 +516,9 @@
       block.appendChild(makeTitle(`${aLabel} <--> ${bLabel}`));
       block.appendChild(makeMeta(`Similarity = ${similarityPct}%  (Different Pixels = ${out.diffCount})`));
 
-      // Show semantic summary if available (even when there are zero pixel diffs)
       if (step.semanticSummary) {
         const t = document.createElement("div");
-        t.style.marginTop = "6px";
-        t.style.fontSize = "0.95em";
-        t.style.color = "#333";
+        t.style.cssText = "margin-top:6px;font-size:0.95em;color:#333;";
         t.textContent = "Change summary: " + step.semanticSummary;
         block.appendChild(t);
       }
@@ -547,9 +543,7 @@
   function makeMeta(text) {
     const d = document.createElement("div");
     d.textContent = text;
-    d.style.fontSize = "0.9em";
-    d.style.color = "#666";
-    d.style.margin = "4px 0 8px";
+    d.style.cssText = "font-size:0.9em;color:#666;margin:4px 0 8px;";
     return d;
   }
 
@@ -557,15 +551,12 @@
     try {
       const fileA = $("pdfA")?.files?.[0] || null;
       const fileB = $("pdfB")?.files?.[0] || null;
-
       if (!fileA || !fileB) {
         setStatus("Please select two files before comparing.", "warn");
         return;
       }
-
       $("downloadPdfBtn").disabled = true;
       if ($("log")) $("log").textContent = "";
-
       await runCompare(fileA, fileB);
     } catch (err) {
       console.error(err);
@@ -580,7 +571,6 @@
         setStatus("No comparison results available. Run Start first.", "warn");
         return;
       }
-
       const dlBtn = $("downloadPdfBtn");
       if (dlBtn) dlBtn.disabled = true;
 
@@ -591,12 +581,12 @@
       const largeReport = $("largeReport") ? $("largeReport").checked : false;
 
       const exportImageType = largeReport ? "jpeg" : "png";
-      const exportQuality = largeReport ? 0.80 : 0.98;
-      const mime = exportImageType === "jpeg" ? "image/jpeg" : "image/png";
+      const exportQuality   = largeReport ? 0.80 : 0.98;
+      const mime            = exportImageType === "jpeg" ? "image/jpeg" : "image/png";
 
       setStatus("Building PDF report…", "info");
 
-      const pdf = new JsPDF({ orientation: "portrait", unit: "mm", format: "a4", compress: true });
+      const pdf   = new JsPDF({ orientation: "portrait", unit: "mm", format: "a4", compress: true });
       const pageW = pdf.internal.pageSize.getWidth();
       const pageH = pdf.internal.pageSize.getHeight();
 
@@ -611,7 +601,6 @@
       pdf.setFontSize(10);
       pdf.text(`Generated: ${new Date().toLocaleString()}`, 15, 66);
 
-      // Overall summary on the title page
       if (overallSummary) {
         pdf.setFontSize(12);
         pdf.text("Overall change summary:", 15, 80);
@@ -622,7 +611,6 @@
 
       for (const step of steps) {
         pdf.addPage();
-
         let y = 12;
         pdf.setTextColor(0, 0, 0);
         pdf.setFontSize(12);
@@ -635,7 +623,6 @@
           pdf.text(`This page only exists in ${fileBName}`, 15, y + 18);
           continue;
         }
-
         if (step.type === "deleteA") {
           pdf.setFontSize(14);
           pdf.text(`Removed from ${fileBName}`, 15, y);
@@ -647,11 +634,10 @@
 
         const out = diffOnlyCanvas(pagesA[step.aIndex], pagesB[step.bIndex], pixelOpts);
         const similarityPct = Math.max(0, 100 - step.cost * 100).toFixed(2);
-        const aLabel = `${fileAName} (Page ${step.aIndex + 1})`;
-        const bLabel = `${fileBName} (Page ${step.bIndex + 1})`;
-
-        // Heading
+        const aLabel  = `${fileAName} (Page ${step.aIndex + 1})`;
+        const bLabel  = `${fileBName} (Page ${step.bIndex + 1})`;
         const heading = `${aLabel} <--> ${bLabel}`;
+
         const headingLines = pdf.splitTextToSize(heading, pageW - 30);
         pdf.text(headingLines, 15, y);
         y += headingLines.length * 6;
@@ -660,24 +646,21 @@
         pdf.text(`Similarity = ${similarityPct}%  (Different Pixels = ${out.diffCount})`, 15, y);
         y += 7;
 
-        // Per-page semantic summary
         if (step.semanticSummary) {
           pdf.setFontSize(11);
-          const sumLines = pdf.splitTextToSize('Change summary: ' + step.semanticSummary, pageW - 30);
+          const sumLines = pdf.splitTextToSize("Change summary: " + step.semanticSummary, pageW - 30);
           pdf.text(sumLines, 15, y);
           y += sumLines.length * 5 + 3;
         }
 
         const imgData = out.diffCanvas.toDataURL(mime, exportQuality);
-
-        const margin = 15;
-        const top = y + 2;
-        const maxW = pageW - margin * 2;
-        const maxH = pageH - top - 12;
+        const margin  = 15;
+        const top     = y + 2;
+        const maxW    = pageW - margin * 2;
+        const maxH    = pageH - top - 12;
 
         let imgW = maxW;
         let imgH = (out.diffCanvas.height / out.diffCanvas.width) * imgW;
-
         if (imgH > maxH) {
           imgH = maxH;
           imgW = (out.diffCanvas.width / out.diffCanvas.height) * imgH;
@@ -687,7 +670,6 @@
       }
 
       pdf.save("GennoCompare.pdf");
-
       setStatus("PDF downloaded.", "info");
       if (dlBtn) dlBtn.disabled = false;
     } catch (err) {

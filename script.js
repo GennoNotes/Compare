@@ -1,17 +1,3 @@
-/*
-  REQUIREMENTS (load these scripts in your HTML before this snippet):
-    - pdf.js (pdfjsLib)       -> window.pdfjsLib
-    - pixelmatch              -> window.pixelmatch
-    - jsPDF                   -> window.jspdf.jsPDF or window.jsPDF
-    - Transformers.js (UMD)   -> window.transformers
-
-  Example (you can self-host or pin versions as needed):
-    https://cdn.jsdelivr.net/npm/pdfjs-dist/build/pdf.min.js</script>
-    https://cdn.jsdelivr.net/npm/pixelmatch/dist/pixelmatch.umd.js</script>
-    https://cdn.jsdelivr.net/npm/jspdf/dist/jspdf.umd.min.js</script>
-    https://cdn.jsdelivr.net/npm/@xenova/transformers/dist/transformers.min.js</script>
-*/
-
 (function () {
   const NL = "\n";
   const $ = (id) => document.getElementById(id);
@@ -304,10 +290,10 @@
   // =========================
   const LLM_ENABLED = true;
   const LLM_TASK = 'text2text-generation';
-  const LLM_MODEL = 'Xenova/flan-t5-small'; // smaller, lighter, fully in-browser
+  const LLM_MODEL = 'Xenova/flan-t5-small';           // smaller, faster, in-browser
   const LLM_MAX_INPUT_CHARS = 3000;
   const LLM_MAX_NEW_TOKENS = 96;
-  const LLM_MIN_DIFF_CHARS = 40;
+  const LLM_MIN_DIFF_CHARS = 1;                        // lowered so short pages still summarize
 
   // =========================
   // LLM HELPERS
@@ -357,10 +343,6 @@
   async function summarizeDiffText(aText, bText) {
     const summarizer = await getSummarizer();
     if (!summarizer) return null;
-
-    const aN = (aText || '').trim().length;
-    const bN = (bText || '').trim().length;
-    if (aN < LLM_MIN_DIFF_CHARS && bN < LLM_MIN_DIFF_CHARS) return null;
 
     const { aFrag, bFrag } = roughChangedExcerpt(aText, bText);
 
@@ -412,6 +394,15 @@
 
   async function runCompare(fileA, fileB) {
     assertLibraries();
+
+    // NEW: warm the LLM so summaries actually run on first use
+    try {
+      setStatus("Loading LLM (first run may take a moment)…", "info");
+      await getSummarizer();
+    } catch (_) {
+      /* ignore; will just skip summaries */
+    }
+
     setStatus("Reticulating splines...", "info");
 
     const results = mustGet("results");
@@ -431,6 +422,7 @@
       setStatus("Extracting text…", "info");
       [textsA, textsB] = await Promise.all([extractPdfPageTexts(pdfA), extractPdfPageTexts(pdfB)]);
     } else {
+      // If 'scanned' is checked, text arrays are empty -> summaries will be minimal.
       textsA = Array.from({ length: pdfA.numPages }, () => "");
       textsB = Array.from({ length: pdfB.numPages }, () => "");
     }
@@ -449,7 +441,7 @@
       scanned
     });
 
-    // ==== NEW: build per-page LLM summaries for matched pages ====
+    // Build per-page LLM summaries for matched pages
     let perPageSummaries = [];
     try {
       const summaries = [];
@@ -468,7 +460,7 @@
       console.warn('LLM page summaries failed or disabled:', e);
     }
 
-    // ==== NEW: overall summary ====
+    // Overall summary
     let overallSummary = null;
     try {
       overallSummary = await summarizeOverallChanges(perPageSummaries);
@@ -488,10 +480,9 @@
       overallSummary
     };
 
-    // Render HTML results
+    // Render HTML
     results.innerHTML = "";
 
-    // Show overall summary at top, if present
     if (overallSummary) {
       const top = document.createElement("div");
       top.className = "block";
@@ -523,18 +514,10 @@
       const aLabel = `${fileA.name} (Page ${step.aIndex + 1})`;
       const bLabel = `${fileB.name} (Page ${step.bIndex + 1})`;
 
-      if (out.diffCount === 0) {
-        block.appendChild(makeTitle(`No changes: ${aLabel} <--> ${bLabel}`, false));
-        block.appendChild(makeMeta("Pages are identical."));
-        // Semantic summary likely empty; skip
-        results.appendChild(block);
-        continue;
-      }
-
       block.appendChild(makeTitle(`${aLabel} <--> ${bLabel}`));
       block.appendChild(makeMeta(`Similarity = ${similarityPct}%  (Different Pixels = ${out.diffCount})`));
 
-      // NEW: show semantic summary if available
+      // Show semantic summary if available (even when there are zero pixel diffs)
       if (step.semanticSummary) {
         const t = document.createElement("div");
         t.style.marginTop = "6px";
@@ -628,7 +611,7 @@
       pdf.setFontSize(10);
       pdf.text(`Generated: ${new Date().toLocaleString()}`, 15, 66);
 
-      // NEW: overall summary on title page
+      // Overall summary on the title page
       if (overallSummary) {
         pdf.setFontSize(12);
         pdf.text("Overall change summary:", 15, 80);
@@ -667,15 +650,7 @@
         const aLabel = `${fileAName} (Page ${step.aIndex + 1})`;
         const bLabel = `${fileBName} (Page ${step.bIndex + 1})`;
 
-        if (out.diffCount === 0) {
-          pdf.setFontSize(12);
-          pdf.text(`No changes: ${aLabel} <--> ${bLabel}`, 15, y);
-          pdf.text("Pages are identical.", 15, y + 8);
-          continue;
-        }
-
-        // Wrap heading so it doesn't clip
-        pdf.setFontSize(12);
+        // Heading
         const heading = `${aLabel} <--> ${bLabel}`;
         const headingLines = pdf.splitTextToSize(heading, pageW - 30);
         pdf.text(headingLines, 15, y);
@@ -685,7 +660,7 @@
         pdf.text(`Similarity = ${similarityPct}%  (Different Pixels = ${out.diffCount})`, 15, y);
         y += 7;
 
-        // NEW: per-page semantic summary
+        // Per-page semantic summary
         if (step.semanticSummary) {
           pdf.setFontSize(11);
           const sumLines = pdf.splitTextToSize('Change summary: ' + step.semanticSummary, pageW - 30);

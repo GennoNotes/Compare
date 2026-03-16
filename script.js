@@ -4,8 +4,7 @@
     - pixelmatch              -> window.pixelmatch
     - jsPDF                   -> window.jspdf.jsPDF or window.jsPDF
 
-  Transformers.js is loaded dynamically as an ES module inside the script.
-  No UMD / window.transformers dependency needed.
+  Transformers.js is loaded dynamically as an ES module.
 */
 
 (function () {
@@ -263,6 +262,66 @@
     return { steps };
   }
 
+  // =========================
+  // POST-PROCESS: re-pair high-cost insert+delete neighbours
+  // =========================
+  // FIX: When the DP emits an insertB immediately followed by (or preceded by)
+  // a deleteA — or vice versa — and the two pages share a title token, forcibly
+  // re-classify them as a "match" so the diff canvas and semantic summary run.
+  // This handles same-title pages with very different content that the DP scores
+  // above badMatchCutoff and routes as a gap pair instead of a match.
+  function repairAdjacentGapPairs(steps, textsA, textsB) {
+    let changed = true;
+    while (changed) {
+      changed = false;
+      for (let k = 0; k < steps.length - 1; k++) {
+        const s1 = steps[k];
+        const s2 = steps[k + 1];
+
+        // Look for (insertB, deleteA) or (deleteA, insertB) adjacent pairs
+        const isInsertDelete =
+          (s1.type === "insertB" && s2.type === "deleteA") ||
+          (s1.type === "deleteA" && s2.type === "insertB");
+
+        if (!isInsertDelete) continue;
+
+        const insertStep = s1.type === "insertB" ? s1 : s2;
+        const deleteStep = s1.type === "deleteA" ? s1 : s2;
+
+        const aText = textsA[deleteStep.aIndex] || "";
+        const bText = textsB[insertStep.bIndex] || "";
+
+        // Compute title overlap: first 120 chars of each page
+        const aTitle = normalizeText(aText.slice(0, 120));
+        const bTitle = normalizeText(bText.slice(0, 120));
+        const aTokens = new Set(aTitle.split(/\s+/).filter(t => t.length >= 3));
+        const bTokens = new Set(bTitle.split(/\s+/).filter(t => t.length >= 3));
+
+        let titleOverlap = 0;
+        for (const t of aTokens) if (bTokens.has(t)) titleOverlap++;
+        const titleSim = (aTokens.size + bTokens.size > 0)
+          ? titleOverlap / Math.max(aTokens.size, bTokens.size)
+          : 0;
+
+        // Re-pair if title similarity ≥ 40% (catches same-title, different-detail pages)
+        if (titleSim >= 0.4) {
+          const mergedStep = {
+            type: "match",
+            aIndex: deleteStep.aIndex,
+            bIndex: insertStep.bIndex,
+            cost: 1.0,   // max cost — guaranteed to show as 0% similarity / fully different
+            forcedMatch: true,
+          };
+          // Replace the two steps with the merged match, preserving order
+          steps.splice(k, 2, mergedStep);
+          changed = true;
+          break;
+        }
+      }
+    }
+    return steps;
+  }
+
   function diffOnlyCanvas(aPage, bPage, pixelOpts) {
     const { a, b, width, height } = cropToCommonSize(aPage, bPage);
     const aImg = a.getContext("2d").getImageData(0, 0, width, height);
@@ -344,13 +403,11 @@
 
   function buildDiffPrompt(aFrag, bFrag) {
     const half = Math.floor(LLM_MAX_INPUT_CHARS / 2);
-    const orig = truncateMiddle(aFrag, half);
-    const upd  = truncateMiddle(bFrag, half);
     return (
       "What are the differences between the following two document sections? " +
       "Focus on additions, removals, and meaning changes. Be concise.\n\n" +
-      "Original: " + orig + "\n\n" +
-      "Updated: "  + upd
+      "Original: " + truncateMiddle(aFrag, half) + "\n\n" +
+      "Updated: "  + truncateMiddle(bFrag, half)
     );
   }
 
@@ -380,12 +437,10 @@
   async function summarizeDiffText(aText, bText) {
     const summarizer = await getSummarizer();
     if (!summarizer) return null;
-
     const { aFrag, bFrag } = roughChangedExcerpt(aText, bText);
     const combinedLen = (aFrag + bFrag).replace(/\s/g, "").length;
     if (combinedLen < LLM_MIN_DIFF_CHARS * 2) return null;
     if (aFrag.trim() === bFrag.trim()) return "Pages appear identical.";
-
     const prompt = buildDiffPrompt(aFrag, bFrag);
     const out = await summarizer(prompt, { max_new_tokens: LLM_MAX_NEW_TOKENS });
     return extractText(out) || null;
@@ -395,12 +450,10 @@
     const summarizer = await getSummarizer();
     if (!summarizer) return null;
     if (!text || text.trim().length < LLM_MIN_DIFF_CHARS) return null;
-
     const prompt =
       "This page was " + disposition + " in the updated document. " +
       "Briefly summarize what this page contains.\n\n" +
       "Page content: " + truncateMiddle(text, LLM_MAX_INPUT_CHARS);
-
     const out = await summarizer(prompt, { max_new_tokens: LLM_MAX_NEW_TOKENS });
     return extractText(out) || null;
   }
@@ -415,14 +468,40 @@
   }
 
   // =========================
-  // SEMANTIC SUMMARY BLOCK HELPER
-  // Used in both HTML render and PDF export to avoid duplication
+  // DOM HELPERS
   // =========================
+  function makeTitle(text, warn) {
+    const t = document.createElement("div");
+    t.textContent = text;
+    t.style.fontWeight = "bold";
+    t.style.margin = "8px 0";
+    if (warn) t.style.color = "#8a5a00";
+    return t;
+  }
+
+  function makeMeta(text) {
+    const d = document.createElement("div");
+    d.textContent = text;
+    d.style.cssText = "font-size:0.9em;color:#666;margin:4px 0 8px;";
+    return d;
+  }
+
   function makeSemanticDiv(summary, label = "Change summary") {
     const t = document.createElement("div");
     t.style.cssText = "margin-top:6px;font-size:0.95em;color:#333;";
     t.textContent = label + ": " + summary;
     return t;
+  }
+
+  // Render a single page canvas (no diff overlay) for insert/delete display
+  function makeSinglePageCanvas(pageCanvas) {
+    const w = pageCanvas.width;
+    const h = pageCanvas.height;
+    const out = document.createElement("canvas");
+    out.width = w;
+    out.height = h;
+    out.getContext("2d").drawImage(pageCanvas, 0, 0);
+    return out;
   }
 
   // =========================
@@ -473,9 +552,11 @@
       threshold, includeAA, matchWindow, scanned,
     });
 
+    // Re-pair same-title insert/delete neighbours that the DP split incorrectly
+    repairAdjacentGapPairs(aligned.steps, textsA, textsB);
+
     setStatus("Generating semantic summaries…", "info");
 
-    // Per-page LLM summaries — now covers match, insertB, and deleteA
     const perPageSummaries = [];
     for (const step of aligned.steps) {
       try {
@@ -513,7 +594,6 @@
       }
     }
 
-    // Overall summary
     let overallSummary = null;
     try {
       overallSummary = await summarizeOverallChanges(perPageSummaries);
@@ -549,33 +629,44 @@
       const block = document.createElement("div");
       block.className = "block";
 
+      // ----- INSERTED PAGE -----
       if (step.type === "insertB") {
         block.appendChild(makeTitle(`Inserted Page: ${fileB.name} (Page ${step.bIndex + 1})`));
         block.appendChild(makeMeta(`This page exists only in ${fileB.name}`));
         if (step.semanticSummary) {
           block.appendChild(makeSemanticDiv(step.semanticSummary, "Page summary"));
         }
+        // FIX: show the actual page canvas so the user can see its content
+        block.appendChild(makeSinglePageCanvas(pagesB[step.bIndex]));
         results.appendChild(block);
         continue;
       }
 
+      // ----- DELETED PAGE -----
       if (step.type === "deleteA") {
-        block.appendChild(makeTitle(`Removed from ${fileB.name} (exists in ${fileA.name}): (Page ${step.aIndex + 1})`));
+        block.appendChild(makeTitle(`Removed: ${fileA.name} (Page ${step.aIndex + 1}) — not in ${fileB.name}`));
         block.appendChild(makeMeta(`This page exists only in ${fileA.name}`));
         if (step.semanticSummary) {
           block.appendChild(makeSemanticDiv(step.semanticSummary, "Page summary"));
         }
+        // FIX: show the actual page canvas so the user can see what was removed
+        block.appendChild(makeSinglePageCanvas(pagesA[step.aIndex]));
         results.appendChild(block);
         continue;
       }
 
-      // match
+      // ----- MATCHED PAGE -----
       const out = diffOnlyCanvas(pagesA[step.aIndex], pagesB[step.bIndex], pixelOpts);
       const similarityPct = Math.max(0, 100 - step.cost * 100).toFixed(2);
       const aLabel = `${fileA.name} (Page ${step.aIndex + 1})`;
       const bLabel = `${fileB.name} (Page ${step.bIndex + 1})`;
 
-      block.appendChild(makeTitle(`${aLabel} <--> ${bLabel}`));
+      // FIX: flag forced matches (same title, very different content) clearly
+      const titleText = step.forcedMatch
+        ? `⚠ Heavily Changed: ${aLabel} <--> ${bLabel}`
+        : `${aLabel} <--> ${bLabel}`;
+
+      block.appendChild(makeTitle(titleText, step.forcedMatch));
       block.appendChild(makeMeta(`Similarity = ${similarityPct}%  (Different Pixels = ${out.diffCount})`));
 
       if (step.semanticSummary) {
@@ -588,22 +679,6 @@
 
     $("downloadPdfBtn").disabled = false;
     setStatus(`Done. Compared ${fileA.name} to ${fileB.name}.`, "info");
-  }
-
-  function makeTitle(text, warn) {
-    const t = document.createElement("div");
-    t.textContent = text;
-    t.style.fontWeight = "bold";
-    t.style.margin = "8px 0";
-    if (warn) t.style.color = "#8a5a00";
-    return t;
-  }
-
-  function makeMeta(text) {
-    const d = document.createElement("div");
-    d.textContent = text;
-    d.style.cssText = "font-size:0.9em;color:#666;margin:4px 0 8px;";
-    return d;
   }
 
   window.compare = async function compare() {
@@ -668,81 +743,85 @@
         pdf.text(lines, 15, 88);
       }
 
+      const margin = 15;
+
+      function addCanvasToPdf(canvas, yStart) {
+        const maxW = pageW - margin * 2;
+        const maxH = pageH - yStart - 12;
+        let imgW = maxW;
+        let imgH = (canvas.height / canvas.width) * imgW;
+        if (imgH > maxH) {
+          imgH = maxH;
+          imgW = (canvas.width / canvas.height) * imgH;
+        }
+        const imgData = canvas.toDataURL(mime, exportQuality);
+        pdf.addImage(imgData, exportImageType.toUpperCase(), margin, yStart, imgW, imgH);
+      }
+
       for (const step of steps) {
         pdf.addPage();
         let y = 12;
         pdf.setTextColor(0, 0, 0);
-        pdf.setFontSize(12);
 
+        // ----- INSERTED PAGE -----
         if (step.type === "insertB") {
           pdf.setFontSize(14);
-          pdf.text(`Inserted page in ${fileBName}`, 15, y);
-          y += 8;
+          pdf.text(`Inserted page in ${fileBName}`, margin, y); y += 8;
           pdf.setFontSize(12);
-          pdf.text(`Page ${step.bIndex + 1}`, 15, y);
-          y += 8;
-          pdf.text(`This page only exists in ${fileBName}`, 15, y);
-          y += 8;
+          pdf.text(`Page ${step.bIndex + 1} — only exists in ${fileBName}`, margin, y); y += 8;
           if (step.semanticSummary) {
             pdf.setFontSize(11);
             const sumLines = pdf.splitTextToSize("Page summary: " + step.semanticSummary, pageW - 30);
-            pdf.text(sumLines, 15, y);
+            pdf.text(sumLines, margin, y);
+            y += sumLines.length * 5 + 3;
           }
+          addCanvasToPdf(pagesB[step.bIndex], y);
           continue;
         }
 
+        // ----- DELETED PAGE -----
         if (step.type === "deleteA") {
           pdf.setFontSize(14);
-          pdf.text(`Removed from ${fileBName}`, 15, y);
-          y += 8;
+          pdf.text(`Removed page from ${fileAName}`, margin, y); y += 8;
           pdf.setFontSize(12);
-          pdf.text(`Page ${step.aIndex + 1} (exists in original)`, 15, y);
-          y += 8;
-          pdf.text(`This page exists only in ${fileAName}`, 15, y);
-          y += 8;
+          pdf.text(`Page ${step.aIndex + 1} — only exists in ${fileAName}`, margin, y); y += 8;
           if (step.semanticSummary) {
             pdf.setFontSize(11);
             const sumLines = pdf.splitTextToSize("Page summary: " + step.semanticSummary, pageW - 30);
-            pdf.text(sumLines, 15, y);
+            pdf.text(sumLines, margin, y);
+            y += sumLines.length * 5 + 3;
           }
+          addCanvasToPdf(pagesA[step.aIndex], y);
           continue;
         }
 
-        // match
+        // ----- MATCHED PAGE -----
         const out = diffOnlyCanvas(pagesA[step.aIndex], pagesB[step.bIndex], pixelOpts);
         const similarityPct = Math.max(0, 100 - step.cost * 100).toFixed(2);
         const aLabel  = `${fileAName} (Page ${step.aIndex + 1})`;
         const bLabel  = `${fileBName} (Page ${step.bIndex + 1})`;
-        const heading = `${aLabel} <--> ${bLabel}`;
+        const heading = step.forcedMatch
+          ? `HEAVILY CHANGED: ${aLabel} <--> ${bLabel}`
+          : `${aLabel} <--> ${bLabel}`;
 
+        pdf.setFontSize(step.forcedMatch ? 13 : 12);
+        if (step.forcedMatch) pdf.setTextColor(139, 90, 0);
         const headingLines = pdf.splitTextToSize(heading, pageW - 30);
-        pdf.text(headingLines, 15, y);
+        pdf.text(headingLines, margin, y);
         y += headingLines.length * 6;
+        pdf.setTextColor(0, 0, 0);
 
         pdf.setFontSize(11);
-        pdf.text(`Similarity = ${similarityPct}%  (Different Pixels = ${out.diffCount})`, 15, y);
+        pdf.text(`Similarity = ${similarityPct}%  (Different Pixels = ${out.diffCount})`, margin, y);
         y += 7;
 
         if (step.semanticSummary) {
           const sumLines = pdf.splitTextToSize("Change summary: " + step.semanticSummary, pageW - 30);
-          pdf.text(sumLines, 15, y);
+          pdf.text(sumLines, margin, y);
           y += sumLines.length * 5 + 3;
         }
 
-        const imgData = out.diffCanvas.toDataURL(mime, exportQuality);
-        const margin  = 15;
-        const top     = y + 2;
-        const maxW    = pageW - margin * 2;
-        const maxH    = pageH - top - 12;
-
-        let imgW = maxW;
-        let imgH = (out.diffCanvas.height / out.diffCanvas.width) * imgW;
-        if (imgH > maxH) {
-          imgH = maxH;
-          imgW = (out.diffCanvas.width / out.diffCanvas.height) * imgH;
-        }
-
-        pdf.addImage(imgData, exportImageType.toUpperCase(), margin, top, imgW, imgH);
+        addCanvasToPdf(out.diffCanvas, y);
       }
 
       pdf.save("GennoCompare.pdf");
